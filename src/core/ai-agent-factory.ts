@@ -56,4 +56,8 @@ export class AIAgentFactory {
   getCachedAgent(userId: string | number): AIAgent | undefined {
     return this.agents.get(userId);
   }
+
+  async getIntegrationsForUser(userId: string | number): Promise<Integration[]> {
+    return await this.userManager.getUserIntegrations(userId);
+  }
 }

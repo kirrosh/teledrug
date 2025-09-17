@@ -664,6 +664,30 @@ END:VCALENDAR`;
     return response;
   }
 
+  private escapeMarkdown(text: string): string {
+    // Экранируем специальные символы Markdown
+    return text
+      .replace(/\\/g, '\\\\')
+      .replace(/\*/g, '\\*')
+      .replace(/_/g, '\\_')
+      .replace(/\[/g, '\\[')
+      .replace(/\]/g, '\\]')
+      .replace(/\(/g, '\\(')
+      .replace(/\)/g, '\\)')
+      .replace(/~/g, '\\~')
+      .replace(/`/g, '\\`')
+      .replace(/>/g, '\\>')
+      .replace(/#/g, '\\#')
+      .replace(/\+/g, '\\+')
+      .replace(/-/g, '\\-')
+      .replace(/=/g, '\\=')
+      .replace(/\|/g, '\\|')
+      .replace(/\{/g, '\\{')
+      .replace(/\}/g, '\\}')
+      .replace(/\./g, '\\.')
+      .replace(/!/g, '\\!');
+  }
+
   private formatEventCard(event: any, index?: number): string {
     const start = new Date(event.startDate);
     const end = new Date(event.endDate);
@@ -705,23 +729,23 @@ END:VCALENDAR`;
     if (index) {
       card += `**${index}.** `;
     }
-    card += `**${event.summary}**\n`;
+    card += `**${this.escapeMarkdown(event.summary)}**\n`;
 
     // Дата и время
-    card += `📅 ${dateStr}, ${startTime}–${endTime}`;
+    card += `📅 ${this.escapeMarkdown(dateStr)}, ${this.escapeMarkdown(startTime)}–${this.escapeMarkdown(endTime)}`;
     if (duration > 0) {
-      card += ` (${durationStr})`;
+      card += ` (${this.escapeMarkdown(durationStr)})`;
     }
     card += "\n";
 
     // Место проведения
     if (event.location) {
-      card += `📍 ${event.location}\n`;
+      card += `📍 ${this.escapeMarkdown(event.location)}\n`;
     }
 
     // Организатор
     if (event.organizer && event.organizer !== event.summary) {
-      card += `👤 ${event.organizer}\n`;
+      card += `👤 ${this.escapeMarkdown(event.organizer)}\n`;
     }
 
     // Участники
@@ -731,7 +755,7 @@ END:VCALENDAR`;
         event.attendees.length > 3
           ? ` и ещё ${event.attendees.length - 3}`
           : "";
-      card += `👥 ${attendeesStr}${moreAttendees}\n`;
+      card += `👥 ${this.escapeMarkdown(attendeesStr + moreAttendees)}\n`;
     }
 
     // Категории/теги
@@ -739,13 +763,13 @@ END:VCALENDAR`;
       const tagsStr = event.categories
         .map((cat: string) => `#${cat.replace(/\s+/g, "_")}`)
         .join(" ");
-      card += `🏷 ${tagsStr}\n`;
+      card += `🏷 ${this.escapeMarkdown(tagsStr)}\n`;
     }
 
     // Статус события
     if (event.status) {
       const statusEmoji = this.getStatusEmoji(event.status);
-      card += `${statusEmoji} ${this.getStatusText(event.status)}\n`;
+      card += `${statusEmoji} ${this.escapeMarkdown(this.getStatusText(event.status))}\n`;
     }
 
     // Описание (краткое)
@@ -754,7 +778,7 @@ END:VCALENDAR`;
         event.description.length > 100
           ? event.description.substring(0, 100) + "..."
           : event.description;
-      card += `💬 ${shortDesc}\n`;
+      card += `💬 ${this.escapeMarkdown(shortDesc)}\n`;
     }
 
     return card.trim();

@@ -1,6 +1,9 @@
-import type { CoreMessage, CoreTool } from "ai";
+import type { ModelMessage, Tool } from "ai";
 import type { Integration } from "../integrations/base/integration";
-import { InteractionType, type ChatContextConfig } from "../types/interaction-types";
+import {
+  InteractionType,
+  type ChatContextConfig,
+} from "../types/interaction-types";
 
 export class ChatContext {
   private interactionType: InteractionType;
@@ -20,8 +23,8 @@ export class ChatContext {
   }
 
   // Фильтрация доступных инструментов для текущего типа взаимодействия
-  getAvailableTools(): Record<string, CoreTool> {
-    const availableTools: Record<string, CoreTool> = {};
+  getAvailableTools(): Record<string, Tool> {
+    const availableTools: Record<string, Tool> = {};
 
     for (const integration of this.availableIntegrations) {
       const tools = integration.getTools();
@@ -36,26 +39,28 @@ export class ChatContext {
     return availableTools;
   }
 
-  // Проверка доступности конкретного инструмента
+  // Проверка доступности конкретного инструмента на основе прав (read/write)
   private isToolAvailable(integration: Integration, toolName: string): boolean {
     const toolMetadata = integration.getToolMetadata(toolName);
 
     // Проверяем поддержку типа взаимодействия
-    if (!toolMetadata.supportedInteractionTypes.includes(this.interactionType)) {
+    if (
+      !toolMetadata.supportedInteractionTypes.includes(this.interactionType)
+    ) {
       return false;
     }
 
-    // Дополнительные ограничения для разных типов взаимодействий
+    // Фильтрация на основе прав read/write в зависимости от типа взаимодействия
     switch (this.interactionType) {
       case InteractionType.IMAGE:
       case InteractionType.FORWARD:
-        // Только инструменты с write-правами и только createEvent
-        return toolMetadata.permissions.write && toolName === 'createEvent';
+        // Только инструменты с write-правами (создание событий)
+        return toolMetadata.permissions.write;
 
       case InteractionType.TEXT:
       case InteractionType.VOICE:
-        // Полный доступ к инструментам
-        return true;
+        // Полный доступ к инструментам - и read, и write
+        return toolMetadata.permissions.read || toolMetadata.permissions.write;
 
       default:
         return false;
@@ -63,8 +68,11 @@ export class ChatContext {
   }
 
   // Построение сообщений для Vercel AI SDK
-  buildMessages(systemPrompt: string, conversationHistory?: string[]): CoreMessage[] {
-    const messages: CoreMessage[] = [
+  buildMessages(
+    systemPrompt: string,
+    conversationHistory?: string[]
+  ): ModelMessage[] {
+    const messages: ModelMessage[] = [
       {
         role: "system",
         content: systemPrompt,
@@ -91,21 +99,40 @@ export class ChatContext {
   }
 
   // Построение текущего сообщения с учетом медиаконтента
-  private buildCurrentMessage(): CoreMessage {
-    const baseMessage: CoreMessage = {
-      role: "user",
-      content: this.messageContent,
-    };
+  private buildCurrentMessage(): ModelMessage {
+    // Для изображений создаем многочастное сообщение с изображением и текстом
+    if (
+      this.interactionType === InteractionType.IMAGE &&
+      this.mediaContent?.imageData
+    ) {
+      const content: any[] = [];
 
-    // Для изображений используем только текстовую подпись, так как gpt-5-nano не поддерживает изображения
-    if (this.interactionType === InteractionType.IMAGE) {
+      // Добавляем изображение
+      content.push({
+        type: "image",
+        image: this.mediaContent.imageData, // base64 data URL или buffer
+      });
+
+      // Добавляем текст (подпись или инструкцию)
+      const textContent =
+        this.messageContent ||
+        "Проанализируй это изображение и создай событие в календаре, если найдешь информацию о встречах, событиях или расписании.";
+      content.push({
+        type: "text",
+        text: textContent,
+      });
+
       return {
         role: "user",
-        content: this.messageContent || "Пользователь отправил изображение. Создай событие если нужно на основе контекста."
+        content,
       };
     }
 
-    return baseMessage;
+    // Для всех остальных типов используем простое текстовое сообщение
+    return {
+      role: "user",
+      content: this.messageContent,
+    };
   }
 
   // Геттеры

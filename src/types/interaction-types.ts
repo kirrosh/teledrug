@@ -25,5 +25,6 @@ export interface ChatContextConfig {
   chatId: string | number;
   messageContent: string;
   mediaContent?: any; // для изображений/аудио
+  metadata?: any; // дополнительные данные
   integrations: any[]; // будет типизировано позже
 }

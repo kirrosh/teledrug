@@ -1,4 +1,4 @@
-import { generateText, type CoreMessage, type GenerateTextResult } from "ai";
+import { generateText, type GenerateTextResult } from "ai";
 import { openai } from "@ai-sdk/openai";
 import type { Integration } from "../integrations/base/integration";
 import type { ProgressStep } from "../core/response-manager";
@@ -40,9 +40,10 @@ export class AIAgent {
         await progressCallback.onThinking();
       }
 
-      // Специальная обработка для голосовых сообщений
+      // Голосовые сообщения уже обработаны в TelegramBot (распознавание через Whisper)
+      // Здесь просто отмечаем что это голосовое сообщение для логирования
       if (chatContext.getInteractionType() === InteractionType.VOICE) {
-        await this.processVoiceMessage(chatContext, progressCallback);
+        console.log("🎤 Processing voice message (already transcribed)");
       }
 
       // Получаем доступные инструменты через ChatContext
@@ -50,13 +51,22 @@ export class AIAgent {
 
       // Строим сообщения для AI SDK
       const systemPrompt = this.buildSystemPrompt(chatContext);
-      const messages = chatContext.buildMessages(systemPrompt, conversationHistory);
+      const messages = chatContext.buildMessages(
+        systemPrompt,
+        conversationHistory
+      );
 
       // Определяем модель на основе типа взаимодействия
       const model = this.selectModel(chatContext.getInteractionType());
 
-      // Прогнозируем возможные tool calls и показываем прогресс
-      await this.showPredictedProgress(chatContext, progressCallback);
+      // Показываем общий прогресс обработки
+      if (progressCallback?.onToolCall) {
+        await progressCallback.onToolCall({
+          type: "tool_call",
+          message: "Анализирую запрос...",
+          emoji: "🤔",
+        });
+      }
 
       // Используем Vercel AI SDK для генерации ответа
       const result = await generateText({
@@ -65,8 +75,31 @@ export class AIAgent {
         tools: availableTools,
       });
 
+      // Уведомляем о вызовах инструментов с их метаданными
+      if (result.toolCalls && progressCallback?.onToolCall) {
+        for (const toolCall of result.toolCalls) {
+          if (toolCall?.toolName) {
+            // Ищем интеграцию, которой принадлежит этот инструмент
+            for (const integration of this.integrations) {
+              const tools = integration.getTools();
+              const tool = tools.find((t) => t.name === toolCall.toolName);
+              if (tool) {
+                // Получаем progressStep с метаданными из интеграции
+                const progressStep = integration.getProgressStep(toolCall.toolName);
+                await progressCallback.onToolCall(progressStep);
+                break;
+              }
+            }
+          }
+        }
+      }
+
       // Уведомляем о результатах tool calls
-      if (result.toolCalls && result.toolResults && progressCallback?.onToolResult) {
+      if (
+        result.toolCalls &&
+        result.toolResults &&
+        progressCallback?.onToolResult
+      ) {
         for (let i = 0; i < result.toolCalls.length; i++) {
           const toolCall = result.toolCalls[i];
           const toolResult = result.toolResults[i];
@@ -83,27 +116,13 @@ export class AIAgent {
     }
   }
 
-  // Обработка голосовых сообщений с помощью Whisper
-  private async processVoiceMessage(
-    _chatContext: ChatContext,
-    progressCallback?: ProgressCallback
-  ): Promise<void> {
-    if (progressCallback?.onToolCall) {
-      await progressCallback.onToolCall({
-        type: 'processing',
-        message: 'Распознаю голосовое сообщение...',
-        emoji: '🎤'
-      });
-    }
-
-    // Здесь будет логика распознавания речи через Whisper API
-    // Результат обновит messageContent в chatContext
-    // TODO: Реализовать интеграцию с Whisper API
-  }
-
   // Выбор модели в зависимости от типа взаимодействия
   private selectModel(interactionType: InteractionType) {
-    // Используем только gpt-5-nano для всех типов взаимодействий
+    // Для изображений используем модель с поддержкой vision
+    if (interactionType === InteractionType.IMAGE) {
+      return openai("gpt-4o");
+    }
+    // Для всех остальных типов используем gpt-5-nano
     return openai(this.config.model || "gpt-5-nano");
   }
 
@@ -126,8 +145,8 @@ ${integrationsList}
         basePrompt += `\n\nПользователь отправил голосовое сообщение. У тебя есть доступ ко всем инструментам.`;
         break;
       case InteractionType.IMAGE:
-        basePrompt += `\n\nПользователь отправил изображение с подписью. Используй только текст подписи для анализа и создай событие в календаре, если это необходимо. Доступен только инструмент createEvent.
-        ВАЖНО: У тебя нет возможности анализировать содержимое изображений, работай только с текстом подписи.`;
+        basePrompt += `\n\nПользователь отправил изображение. Проанализируй содержимое изображения и текст подписи (если есть), и создай событие в календаре, если найдешь информацию о встречах, событиях, расписании. Доступен только инструмент createEvent.
+        Обрати внимание на: даты, время, места, названия событий, имена людей.`;
         break;
       case InteractionType.FORWARD:
         basePrompt += `\n\nПользователь переслал сообщение. Проанализируй контент и создай событие в календаре, если это необходимо. Доступен только инструмент createEvent.`;
@@ -135,26 +154,6 @@ ${integrationsList}
     }
 
     return basePrompt;
-  }
-
-  // Прогнозирование и показ прогресса
-  private async showPredictedProgress(
-    chatContext: ChatContext,
-    progressCallback?: ProgressCallback
-  ): Promise<void> {
-    if (!progressCallback?.onToolCall) return;
-
-    const possibleTools = this.predictToolsFromMessage(
-      chatContext.getMessageContent()
-    );
-
-    if (possibleTools.length > 0) {
-      const primaryTool = possibleTools[0];
-      if (primaryTool) {
-        const progressStep = this.getProgressStepForTool(primaryTool);
-        await progressCallback.onToolCall(progressStep);
-      }
-    }
   }
 
   // Устаревшие методы - оставляем для обратной совместимости
@@ -176,86 +175,16 @@ ${integrationsList}
       userId: this.config.userId,
       chatId: this.config.userId, // используем userId как chatId для совместимости
       messageContent: userMessage,
-      integrations: this.integrations
+      integrations: this.integrations,
     });
 
-    return this.processMessage(chatContext, conversationHistory, progressCallback);
+    return this.processMessage(
+      chatContext,
+      conversationHistory,
+      progressCallback
+    );
   }
 
-  private formatToolResults(
-    result: GenerateTextResult<Record<string, any>, any>
-  ): string {
-    const responses: string[] = [];
-
-    if (!result.toolCalls || !result.toolResults) {
-      return "Задача выполнена!";
-    }
-
-    for (let i = 0; i < result.toolCalls.length; i++) {
-      const toolCall = result.toolCalls[i];
-      const toolResult = result.toolResults[i];
-
-      if (!toolResult) continue;
-
-      // Находим интеграцию, которой принадлежит этот инструмент
-      for (const integration of this.integrations) {
-        const tools = integration.getTools();
-        const tool = tools.find((t) => t.name === toolCall?.toolName);
-        if (tool && toolCall?.toolName) {
-          const formatted = integration.formatToolResult(
-            toolCall.toolName,
-            toolResult
-          );
-          responses.push(formatted);
-          break;
-        }
-      }
-    }
-
-    return responses.length > 0 ? responses.join("\n\n") : "Задача выполнена!";
-  }
-
-
-  private predictToolsFromMessage(message: string): string[] {
-    const lowerMessage = message.toLowerCase();
-    const possibleTools: string[] = [];
-
-    // Простая эвристика для прогнозирования tools
-    if (lowerMessage.includes('календар') || lowerMessage.includes('событи') ||
-        lowerMessage.includes('встреч') || lowerMessage.includes('завтра') ||
-        lowerMessage.includes('сегодня') || lowerMessage.includes('расписание')) {
-
-      if (lowerMessage.includes('создай') || lowerMessage.includes('добавь') ||
-          lowerMessage.includes('запланируй') || lowerMessage.includes('назначь')) {
-        possibleTools.push('createEvent');
-      } else if (lowerMessage.includes('последн') || lowerMessage.includes('недавн')) {
-        possibleTools.push('getLastEvents');
-      } else {
-        possibleTools.push('getEvents');
-      }
-    }
-
-    return possibleTools;
-  }
-
-  private getProgressStepForTool(toolName: string): ProgressStep {
-    // Ищем интеграцию, которая содержит этот инструмент
-    for (const integration of this.integrations) {
-      const tools = integration.getTools();
-      const tool = tools.find(t => t.name === toolName);
-      if (tool) {
-        return integration.getProgressStep(toolName);
-      }
-    }
-
-    // Fallback для неизвестных инструментов
-    return {
-      type: 'tool_call',
-      message: 'Выполняю операцию...',
-      emoji: '⚙️',
-      metadata: { toolName }
-    };
-  }
 
   getIntegrations(): Integration[] {
     return this.integrations;

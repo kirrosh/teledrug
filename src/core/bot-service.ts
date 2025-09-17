@@ -6,6 +6,8 @@ import { YandexCalendarIntegration } from "../integrations/yandex-calendar";
 import { ResponseManager } from "./response-manager";
 // import { JiraIntegration } from "../integrations/jira"; // Отключено
 import type { Context } from "grammy";
+import { ChatContext } from "./chat-context";
+import { InteractionType } from "../types/interaction-types";
 
 export interface BotServiceConfig {
   telegramToken: string;
@@ -17,8 +19,10 @@ export class BotService {
   private userManager: UserManager;
   private aiAgentFactory: AIAgentFactory;
   private responseManager: ResponseManager;
+  private telegramToken: string;
 
   constructor(config: BotServiceConfig) {
+    this.telegramToken = config.telegramToken;
     this.userManager = new UserManager();
     this.aiAgentFactory = new AIAgentFactory(
       this.userManager,
@@ -45,13 +49,13 @@ export class BotService {
         await this.handleTextMessage(ctx, text, history);
       },
       onAudio: async (ctx: Context, audio: any, history: string[]) => {
-        await ctx.reply("🎵 Обработка аудио будет реализована позже");
+        await this.handleVoiceMessage(ctx, audio, history);
       },
       onPhoto: async (ctx: Context, photos: any, history: string[]) => {
-        await ctx.reply("📸 Обработка изображений будет реализована позже");
+        await this.handlePhotoMessage(ctx, photos, history);
       },
       onForward: async (ctx: Context, message: any, history: string[]) => {
-        await ctx.reply("↗️ Обработка форвардов будет реализована позже");
+        await this.handleForwardMessage(ctx, message, history);
       },
       onIntegrationsCommand: async (ctx: Context) => {
         await this.handleIntegrationsCommand(ctx);
@@ -162,7 +166,24 @@ export class BotService {
       });
 
       if (result) {
-        const responseText = result.text || "Задача выполнена!";
+        // Если есть toolCalls, форматируем их результаты
+        let responseText = result.text || "";
+
+        if (result.toolCalls && result.toolResults && result.toolCalls.length > 0) {
+          // Получаем агента для форматирования результатов
+          const agent = await this.aiAgentFactory.getOrCreateAgent(userId);
+          const formattedResults = this.formatToolResults(agent, result);
+
+          // Комбинируем текст AI и результаты инструментов
+          if (responseText && formattedResults) {
+            responseText = `${responseText}\n\n${formattedResults}`;
+          } else {
+            responseText = formattedResults || responseText || "Задача выполнена!";
+          }
+        } else if (!responseText) {
+          responseText = "Задача выполнена!";
+        }
+
         const messageId = await this.responseManager.finishProgress(ctx, responseText);
 
         // Сохраняем ответ в историю с ID сообщения
@@ -234,5 +255,316 @@ export class BotService {
   async stop(): Promise<void> {
     console.log("🛑 Остановка сервиса бота...");
     await this.telegramBot.stop();
+  }
+
+  private async handleVoiceMessage(
+    ctx: Context,
+    audio: any,
+    history: string[]
+  ): Promise<void> {
+    const userId = ctx.from?.id;
+    if (!userId) {
+      await ctx.reply("❌ Не удалось определить пользователя");
+      return;
+    }
+
+    try {
+      console.log(`🎤 Обработка голосового сообщения от пользователя ${userId}`);
+
+      // Создаем ChatContext для голосового сообщения
+      const integrations = await this.aiAgentFactory.getIntegrationsForUser(userId);
+      const chatContext = new ChatContext({
+        interactionType: InteractionType.VOICE,
+        userId,
+        chatId: ctx.chat?.id || userId,
+        messageContent: "", // Будет заполнено после транскрипции
+        metadata: { originalAudio: audio },
+        integrations
+      });
+
+      // Показываем начальный прогресс
+      await this.responseManager.startProgress(ctx, {
+        type: 'thinking',
+        message: 'Распознаю речь...',
+        emoji: '🎤'
+      });
+
+      // Получаем AI агента
+      const agent = await this.aiAgentFactory.getOrCreateAgent(userId);
+
+      // Обрабатываем через AI агента с прогрессом
+      const result = await agent.processMessage(chatContext, history, {
+        onThinking: async () => {
+          await this.responseManager.updateProgress(ctx, {
+            type: 'thinking',
+            message: 'Анализирую голосовое сообщение...',
+            emoji: '🧠'
+          });
+        },
+        onToolCall: async (progressStep) => {
+          await this.responseManager.updateProgress(ctx, progressStep);
+        }
+      });
+
+      // Форматируем результаты аналогично текстовым сообщениям
+      let responseText = result.text || "";
+
+      if (result.toolCalls && result.toolResults && result.toolCalls.length > 0) {
+        const formattedResults = this.formatToolResults(agent, result);
+
+        if (responseText && formattedResults) {
+          responseText = `${responseText}\n\n${formattedResults}`;
+        } else {
+          responseText = formattedResults || responseText || "Голосовое сообщение обработано!";
+        }
+      } else if (!responseText) {
+        responseText = "Голосовое сообщение обработано!";
+      }
+
+      const messageId = await this.responseManager.finishProgress(ctx, responseText);
+
+      if (ctx.chat?.id) {
+        this.telegramBot.addAssistantResponse(ctx.chat.id, responseText, messageId);
+      }
+
+    } catch (error) {
+      console.error("Ошибка при обработке голосового сообщения:", error);
+      const errorMsg = `❌ Произошла ошибка при обработке голосового сообщения: ${error}`;
+      await this.responseManager.finishProgress(ctx, errorMsg);
+    }
+  }
+
+  private async handlePhotoMessage(
+    ctx: Context,
+    photos: any,
+    history: string[]
+  ): Promise<void> {
+    const userId = ctx.from?.id;
+    if (!userId) {
+      await ctx.reply("❌ Не удалось определить пользователя");
+      return;
+    }
+
+    try {
+      console.log(`📸 Обработка изображения от пользователя ${userId}`);
+
+      // Извлекаем подпись к изображению
+      const caption = ctx.message?.caption || "";
+
+      // Получаем лучшее качество изображения
+      const photo = photos[photos.length - 1];
+      if (!photo) {
+        await ctx.reply("❌ Не удалось получить изображение");
+        return;
+      }
+
+      // Показываем начальный прогресс
+      await this.responseManager.startProgress(ctx, {
+        type: 'thinking',
+        message: 'Загружаю изображение...',
+        emoji: '📸'
+      });
+
+      // Загружаем изображение через TelegramBot
+      const imageData = await this.loadImageFromTelegram(ctx, photo);
+
+      // Создаем ChatContext для изображения с данными
+      const integrations = await this.aiAgentFactory.getIntegrationsForUser(userId);
+      const chatContext = new ChatContext({
+        interactionType: InteractionType.IMAGE,
+        userId,
+        chatId: ctx.chat?.id || userId,
+        messageContent: caption || "Проанализируй это изображение",
+        mediaContent: { imageData: imageData },
+        integrations
+      });
+
+      // Показываем начальный прогресс
+      await this.responseManager.startProgress(ctx, {
+        type: 'thinking',
+        message: 'Анализирую изображение...',
+        emoji: '🖼️'
+      });
+
+      // Получаем AI агента
+      const agent = await this.aiAgentFactory.getOrCreateAgent(userId);
+
+      // Обрабатываем через AI агента с прогрессом
+      const result = await agent.processMessage(chatContext, history, {
+        onThinking: async () => {
+          await this.responseManager.updateProgress(ctx, {
+            type: 'thinking',
+            message: 'Извлекаю текст из изображения...',
+            emoji: '🔍'
+          });
+        },
+        onToolCall: async (progressStep) => {
+          await this.responseManager.updateProgress(ctx, progressStep);
+        }
+      });
+
+      // Форматируем результаты аналогично текстовым сообщениям
+      let responseText = result.text || "";
+
+      if (result.toolCalls && result.toolResults && result.toolCalls.length > 0) {
+        const formattedResults = this.formatToolResults(agent, result);
+
+        if (responseText && formattedResults) {
+          responseText = `${responseText}\n\n${formattedResults}`;
+        } else {
+          responseText = formattedResults || responseText || "Изображение обработано!";
+        }
+      } else if (!responseText) {
+        responseText = "Изображение обработано!";
+      }
+
+      const messageId = await this.responseManager.finishProgress(ctx, responseText);
+
+      if (ctx.chat?.id) {
+        this.telegramBot.addAssistantResponse(ctx.chat.id, responseText, messageId);
+      }
+
+    } catch (error) {
+      console.error("Ошибка при обработке изображения:", error);
+      const errorMsg = `❌ Произошла ошибка при обработке изображения: ${error}`;
+      await this.responseManager.finishProgress(ctx, errorMsg);
+    }
+  }
+
+  private async handleForwardMessage(
+    ctx: Context,
+    message: any,
+    history: string[]
+  ): Promise<void> {
+    const userId = ctx.from?.id;
+    if (!userId) {
+      await ctx.reply("❌ Не удалось определить пользователя");
+      return;
+    }
+
+    try {
+      console.log(`↗️ Обработка пересланного сообщения от пользователя ${userId}`);
+
+      // Извлекаем текст из пересланного сообщения
+      const forwardedText = message.text || message.caption || "Переслано сообщение без текста";
+
+      // Создаем ChatContext для пересланного сообщения
+      const integrations = await this.aiAgentFactory.getIntegrationsForUser(userId);
+      const chatContext = new ChatContext({
+        interactionType: InteractionType.FORWARD,
+        userId,
+        chatId: ctx.chat?.id || userId,
+        messageContent: forwardedText,
+        metadata: { originalMessage: message, forwardedText },
+        integrations
+      });
+
+      // Показываем начальный прогресс
+      await this.responseManager.startProgress(ctx, {
+        type: 'thinking',
+        message: 'Анализирую пересланное сообщение...',
+        emoji: '↗️'
+      });
+
+      // Получаем AI агента
+      const agent = await this.aiAgentFactory.getOrCreateAgent(userId);
+
+      // Обрабатываем через AI агента с прогрессом
+      const result = await agent.processMessage(chatContext, history, {
+        onThinking: async () => {
+          await this.responseManager.updateProgress(ctx, {
+            type: 'thinking',
+            message: 'Анализирую содержимое...',
+            emoji: '🧠'
+          });
+        },
+        onToolCall: async (progressStep) => {
+          await this.responseManager.updateProgress(ctx, progressStep);
+        }
+      });
+
+      // Форматируем результаты аналогично текстовым сообщениям
+      let responseText = result.text || "";
+
+      if (result.toolCalls && result.toolResults && result.toolCalls.length > 0) {
+        const formattedResults = this.formatToolResults(agent, result);
+
+        if (responseText && formattedResults) {
+          responseText = `${responseText}\n\n${formattedResults}`;
+        } else {
+          responseText = formattedResults || responseText || "Пересланное сообщение обработано!";
+        }
+      } else if (!responseText) {
+        responseText = "Пересланное сообщение обработано!";
+      }
+
+      const messageId = await this.responseManager.finishProgress(ctx, responseText);
+
+      if (ctx.chat?.id) {
+        this.telegramBot.addAssistantResponse(ctx.chat.id, responseText, messageId);
+      }
+
+    } catch (error) {
+      console.error("Ошибка при обработке пересланного сообщения:", error);
+      const errorMsg = `❌ Произошла ошибка при обработке пересланного сообщения: ${error}`;
+      await this.responseManager.finishProgress(ctx, errorMsg);
+    }
+  }
+
+  private formatToolResults(agent: any, result: any): string {
+    const responses: string[] = [];
+
+    if (!result.toolCalls || !result.toolResults) {
+      return "";
+    }
+
+    for (let i = 0; i < result.toolCalls.length; i++) {
+      const toolCall = result.toolCalls[i];
+      const toolResult = result.toolResults[i];
+
+      if (!toolResult || !toolCall?.toolName) continue;
+
+      // Находим интеграцию, которой принадлежит этот инструмент
+      const integrations = agent.getIntegrations();
+      for (const integration of integrations) {
+        const tools = integration.getTools();
+        const tool = tools.find((t: any) => t.name === toolCall.toolName);
+        if (tool) {
+          const formatted = integration.formatToolResult(toolCall.toolName, toolResult);
+          responses.push(formatted);
+          break;
+        }
+      }
+    }
+
+    return responses.length > 0 ? responses.join("\n\n") : "";
+  }
+
+  private async loadImageFromTelegram(ctx: Context, photo: any): Promise<string> {
+    try {
+      // Получаем URL файла через Telegram Bot API
+      const fileResponse = await ctx.api.getFile(photo.file_id);
+      const fileUrl = `https://api.telegram.org/file/bot${this.telegramToken}/${fileResponse.file_path}`;
+
+      // Загружаем изображение
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const imageBuffer = await response.arrayBuffer();
+      const base64Data = Buffer.from(imageBuffer).toString('base64');
+
+      // Определяем MIME-тип (предполагаем JPEG)
+      const mimeType = photo.mime_type || 'image/jpeg';
+      const imageData = `data:${mimeType};base64,${base64Data}`;
+
+      console.log("✅ Image loaded and converted to base64");
+      return imageData;
+
+    } catch (error) {
+      console.error("Error loading image from Telegram:", error);
+      throw new Error(`Failed to load image: ${error}`);
+    }
   }
 }

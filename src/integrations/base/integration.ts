@@ -1,6 +1,9 @@
-import type { CoreTool, TypedToolResult } from "ai";
+import type { Tool, TypedToolResult } from "ai";
 import type { ProgressStep } from "../../core/response-manager";
-import type { ToolMetadata, InteractionType } from "../../types/interaction-types";
+import type {
+  ToolMetadata,
+  InteractionType,
+} from "../../types/interaction-types";
 
 export interface IntegrationConfig {
   name: string;
@@ -14,7 +17,7 @@ export interface IntegrationCredentials {
 
 export interface IntegrationTool {
   name: string;
-  tool: CoreTool;
+  tool: Tool;
 }
 
 export abstract class Integration {
@@ -48,23 +51,28 @@ export abstract class Integration {
   }
 
   // Проверка поддержки типа взаимодействия конкретным инструментом
-  isToolAvailableForInteraction(toolName: string, interactionType: InteractionType): boolean {
+  isToolAvailableForInteraction(
+    toolName: string,
+    interactionType: InteractionType
+  ): boolean {
     const metadata = this.toolsMetadata.get(toolName);
-    return metadata ? metadata.supportedInteractionTypes.includes(interactionType) : false;
+    return metadata
+      ? metadata.supportedInteractionTypes.includes(interactionType)
+      : false;
   }
 
   // Получение прогресс-сообщения для инструмента
   getToolProgressStep(toolName: string): ProgressStep {
     const metadata = this.getToolMetadata(toolName);
     return {
-      type: 'tool_call',
+      type: "tool_call",
       message: metadata.progressMessage,
       emoji: metadata.progressEmoji,
       metadata: {
         toolName,
         integration: this.getName(),
-        permissions: metadata.permissions
-      }
+        permissions: metadata.permissions,
+      },
     };
   }
 

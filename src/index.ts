@@ -40,15 +40,15 @@ async function main() {
     throw new Error("❌ Не установлен API ключ OpenAI (OPENAI_API_KEY)");
   }
 
-  // Выполняем миграции БД перед запуском бота
-  try {
-    console.log("🗄️ Выполнение миграций базы данных...");
-    await Bun.$`bun run db:migrate`;
-    console.log("✅ Миграции выполнены успешно");
-  } catch (error) {
-    console.error("❌ Ошибка выполнения миграций:", error);
-    // Не прерываем выполнение, так как миграции могут быть уже применены
-  }
+  // Миграции временно отключены
+  // try {
+  //   console.log("🗄️ Выполнение миграций базы данных...");
+  //   await Bun.$`bun run db:migrate`;
+  //   console.log("✅ Миграции выполнены успешно");
+  // } catch (error) {
+  //   console.error("❌ Ошибка выполнения миграций:", error);
+  //   // Не прерываем выполнение, так как миграции могут быть уже применены
+  // }
 
   const botService = new BotService({
     telegramToken,

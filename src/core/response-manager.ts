@@ -7,6 +7,10 @@ export interface ProgressStep {
   metadata?: {
     toolName?: string;
     integration?: string;
+    permissions?: {
+      read: boolean;
+      write: boolean;
+    };
   };
 }
 
