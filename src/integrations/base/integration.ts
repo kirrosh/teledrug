@@ -1,5 +1,6 @@
-import type { Tool, TypedToolResult } from "ai";
+import type { CoreTool, TypedToolResult } from "ai";
 import type { ProgressStep } from "../../core/response-manager";
+import type { ToolMetadata, InteractionType } from "../../types/interaction-types";
 
 export interface IntegrationConfig {
   name: string;
@@ -13,7 +14,7 @@ export interface IntegrationCredentials {
 
 export interface IntegrationTool {
   name: string;
-  tool: Tool<any, any>;
+  tool: CoreTool;
 }
 
 export abstract class Integration {
@@ -21,8 +22,50 @@ export abstract class Integration {
   protected credentials?: IntegrationCredentials;
   protected isAuthenticated: boolean = false;
 
+  // Новое: метаданные инструментов
+  protected toolsMetadata: Map<string, ToolMetadata> = new Map();
+
   constructor(config: IntegrationConfig) {
     this.config = config;
+    this.initializeToolsMetadata();
+  }
+
+  // Абстрактный метод для инициализации метаданных
+  protected abstract initializeToolsMetadata(): void;
+
+  // Получение метаданных конкретного инструмента
+  getToolMetadata(toolName: string): ToolMetadata {
+    const metadata = this.toolsMetadata.get(toolName);
+    if (!metadata) {
+      throw new Error(`Tool metadata not found: ${toolName}`);
+    }
+    return metadata;
+  }
+
+  // Получение всех метаданных инструментов
+  getAllToolsMetadata(): ToolMetadata[] {
+    return Array.from(this.toolsMetadata.values());
+  }
+
+  // Проверка поддержки типа взаимодействия конкретным инструментом
+  isToolAvailableForInteraction(toolName: string, interactionType: InteractionType): boolean {
+    const metadata = this.toolsMetadata.get(toolName);
+    return metadata ? metadata.supportedInteractionTypes.includes(interactionType) : false;
+  }
+
+  // Получение прогресс-сообщения для инструмента
+  getToolProgressStep(toolName: string): ProgressStep {
+    const metadata = this.getToolMetadata(toolName);
+    return {
+      type: 'tool_call',
+      message: metadata.progressMessage,
+      emoji: metadata.progressEmoji,
+      metadata: {
+        toolName,
+        integration: this.getName(),
+        permissions: metadata.permissions
+      }
+    };
   }
 
   abstract authenticate(credentials: IntegrationCredentials): Promise<boolean>;
@@ -34,9 +77,12 @@ export abstract class Integration {
     result: TypedToolResult<Record<string, any>>
   ): string;
 
-  abstract getProgressStep(toolName: string): ProgressStep;
-
   abstract disconnect(): Promise<void>;
+
+  // Обновленный метод getProgressStep для использования метаданных
+  getProgressStep(toolName: string): ProgressStep {
+    return this.getToolProgressStep(toolName);
+  }
 
   getName(): string {
     return this.config.name;

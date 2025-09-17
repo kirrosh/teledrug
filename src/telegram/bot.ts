@@ -4,12 +4,16 @@ import { ConversationHistory } from "../modules/conversation-history";
 import { CalendarSetupHandler } from "./handlers/calendar-setup";
 import { CalendarTestHandler } from "./handlers/calendar-test";
 import type { UserManager } from "../core/user-manager";
+import { ChatContext } from "../core/chat-context";
+import { InteractionType } from "../types/interaction-types";
+import type { Integration } from "../integrations/base/integration";
 
 export interface TelegramBotConfig {
   token: string;
 }
 
 export interface MessageHandlers {
+  // Старые обработчики для обратной совместимости
   onText: (ctx: Context, text: string, history: string[]) => Promise<void>;
   onAudio: (
     ctx: Context,
@@ -26,6 +30,15 @@ export interface MessageHandlers {
     forwardedMessage: Message,
     history: string[]
   ) => Promise<void>;
+
+  // Новый универсальный обработчик
+  processWithAI?: (
+    chatContext: ChatContext,
+    ctx: Context,
+    history: string[]
+  ) => Promise<void>;
+
+  // Команды интеграций
   onIntegrationsCommand?: (ctx: Context) => Promise<void>;
   onRemoveIntegrationCommand?: (ctx: Context, args: string[]) => Promise<void>;
 }
@@ -37,7 +50,14 @@ export class TelegramBot {
   private calendarSetup: CalendarSetupHandler;
   private calendarTest: CalendarTestHandler;
   private chatMessages: Map<number, number[]> = new Map(); // chatId -> messageIds
-  private ensureUserCallback?: (userId: number, username?: string) => Promise<void>;
+  private ensureUserCallback?: (
+    userId: number,
+    username?: string
+  ) => Promise<void>;
+
+  // Новые поля для работы с интеграциями
+  private availableIntegrations: Integration[] = [];
+  private getAvailableIntegrationsCallback?: (userId: number) => Integration[];
 
   constructor(config: TelegramBotConfig) {
     this.bot = new Bot(config.token);
@@ -52,12 +72,27 @@ export class TelegramBot {
     this.handlers = { ...this.handlers, ...handlers };
   }
 
-  setEnsureUserCallback(callback: (userId: number, username?: string) => Promise<void>) {
+  setEnsureUserCallback(
+    callback: (userId: number, username?: string) => Promise<void>
+  ) {
     this.ensureUserCallback = callback;
   }
 
   setUserManager(userManager: UserManager) {
     this.calendarSetup.setUserManager(userManager);
+  }
+
+  setGetAvailableIntegrationsCallback(
+    callback: (userId: number) => Integration[]
+  ) {
+    this.getAvailableIntegrationsCallback = callback;
+  }
+
+  private getAvailableIntegrations(userId: number): Integration[] {
+    if (this.getAvailableIntegrationsCallback) {
+      return this.getAvailableIntegrationsCallback(userId);
+    }
+    return this.availableIntegrations;
   }
 
   private async ensureUser(ctx: Context): Promise<boolean> {
@@ -201,9 +236,8 @@ export class TelegramBot {
       }
 
       if (ctx.message.forward_origin) {
-        if (this.handlers.onForward) {
-          await this.handlers.onForward(ctx, ctx.message, history);
-        }
+        // Обработка пересланных сообщений через новую архитектуру
+        await this.handleForward(ctx, ctx.message, history);
       } else {
         const userMessage = ctx.message.text;
         this.conversationHistory.addUserMessage(chatId, userMessage);
@@ -211,9 +245,8 @@ export class TelegramBot {
         // Сохраняем ID пользовательского сообщения
         this.trackMessage(chatId, ctx.message.message_id);
 
-        if (this.handlers.onText) {
-          await this.handlers.onText(ctx, userMessage, history);
-        }
+        // Обработка текста через новую архитектуру
+        await this.handleText(ctx, userMessage, history);
       }
     });
 
@@ -221,27 +254,24 @@ export class TelegramBot {
       const chatId = ctx.chat.id;
       const history = this.conversationHistory.getHistory(chatId);
 
-      if (this.handlers.onAudio) {
-        await this.handlers.onAudio(ctx, ctx.message.audio, history);
-      }
+      // Обработка аудио через новую архитектуру
+      await this.handleVoice(ctx, ctx.message.audio, history);
     });
 
     this.bot.on("message:voice", async (ctx) => {
       const chatId = ctx.chat.id;
       const history = this.conversationHistory.getHistory(chatId);
 
-      if (this.handlers.onAudio) {
-        await this.handlers.onAudio(ctx, ctx.message.voice as any, history);
-      }
+      // Обработка голосовых сообщений через новую архитектуру
+      await this.handleVoice(ctx, ctx.message.voice as any, history);
     });
 
     this.bot.on("message:photo", async (ctx) => {
       const chatId = ctx.chat.id;
       const history = this.conversationHistory.getHistory(chatId);
 
-      if (this.handlers.onPhoto) {
-        await this.handlers.onPhoto(ctx, ctx.message.photo, history);
-      }
+      // Обработка изображений через новую архитектуру
+      await this.handlePhoto(ctx, ctx.message.photo, history);
     });
   }
 
@@ -296,5 +326,187 @@ export class TelegramBot {
 
   getTrackedMessagesCount(chatId: number): number {
     return this.chatMessages.get(chatId)?.length || 0;
+  }
+
+  // Новые обработчики с использованием ChatContext
+  private async handleText(
+    ctx: Context,
+    text: string,
+    history: string[]
+  ): Promise<void> {
+    const chatContext = this.createChatContext(ctx, InteractionType.TEXT, text);
+    await this.processWithAI(chatContext, ctx, history);
+  }
+
+  private async handleVoice(
+    ctx: Context,
+    audio: any,
+    history: string[]
+  ): Promise<void> {
+    const userId = ctx.from?.id;
+
+    if (!userId || !ctx.chat) return;
+
+    try {
+      // TODO: Реализовать получение аудиофайла и распознавание
+      // const fileUrl = await this.getFileUrl(ctx, audio.file_id);
+      // const audioBuffer = await this.downloadFile(fileUrl);
+      // const transcription = await this.transcribeAudio(audioBuffer);
+
+      // Пока используем placeholder
+      const transcription = "Распознанный текст из голосового сообщения"; // TODO: заменить на реальное распознавание
+
+      const chatContext = this.createChatContext(
+        ctx,
+        InteractionType.VOICE,
+        transcription,
+        audio
+      );
+      await this.processWithAI(chatContext, ctx, history);
+    } catch (error) {
+      console.error("Error handling voice message:", error);
+      await ctx.reply("❌ Ошибка при обработке голосового сообщения");
+    }
+  }
+
+  private async handlePhoto(
+    ctx: Context,
+    photos: any[],
+    history: string[]
+  ): Promise<void> {
+    const userId = ctx.from?.id;
+    const caption = (ctx.message as any)?.caption || "";
+
+    if (!userId || !ctx.chat) return;
+
+    try {
+      // TODO: В будущем можно получить изображение:
+      // const photo = photos[photos.length - 1];
+      // TODO: Реализовать получение изображения
+      // const fileUrl = await this.getFileUrl(ctx, photo.file_id);
+      // const imageBuffer = await this.downloadFile(fileUrl);
+      // const base64Image = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
+
+      // Пока используем placeholder
+      const base64Image = "data:image/jpeg;base64,placeholder"; // TODO: заменить на реальное изображение
+
+      const messageContent =
+        caption || "Анализируй изображение и создай событие если нужно";
+      const chatContext = this.createChatContext(
+        ctx,
+        InteractionType.IMAGE,
+        messageContent,
+        base64Image
+      );
+      await this.processWithAI(chatContext, ctx, history);
+    } catch (error) {
+      console.error("Error handling photo:", error);
+      await ctx.reply("❌ Ошибка при обработке изображения");
+    }
+  }
+
+  private async handleForward(
+    ctx: Context,
+    forwardedMessage: Message,
+    history: string[]
+  ): Promise<void> {
+    const userId = ctx.from?.id;
+
+    if (!userId || !ctx.chat) return;
+
+    try {
+      // Извлечь контент из пересланного сообщения
+      let forwardedContent = "";
+
+      if ("text" in forwardedMessage) {
+        forwardedContent = forwardedMessage.text || "";
+      } else if ("caption" in forwardedMessage && forwardedMessage.caption) {
+        forwardedContent = forwardedMessage.caption;
+      }
+
+      // Добавить контекст о пересланном сообщении
+      const contextualMessage = `Пересланное сообщение: "${forwardedContent}"
+
+Проанализируй это сообщение и создай событие в календаре, если это уместно.`;
+
+      const chatContext = this.createChatContext(
+        ctx,
+        InteractionType.FORWARD,
+        contextualMessage
+      );
+      await this.processWithAI(chatContext, ctx, history);
+    } catch (error) {
+      console.error("Error handling forwarded message:", error);
+      await ctx.reply("❌ Ошибка при обработке пересланного сообщения");
+    }
+  }
+
+  // Создание ChatContext
+  private createChatContext(
+    ctx: Context,
+    interactionType: InteractionType,
+    messageContent: string,
+    mediaContent?: any
+  ): ChatContext {
+    const userId = ctx.from?.id || 0;
+    const chatId = ctx.chat?.id || 0;
+
+    return new ChatContext({
+      interactionType,
+      userId,
+      chatId,
+      messageContent,
+      mediaContent,
+      integrations: this.getAvailableIntegrations(userId),
+    });
+  }
+
+  // Универсальный метод обработки через AI
+  private async processWithAI(
+    chatContext: ChatContext,
+    ctx: Context,
+    history: string[]
+  ): Promise<void> {
+    // Используем новый обработчик если есть, иначе fallback на старые
+    if (this.handlers.processWithAI) {
+      await this.handlers.processWithAI(chatContext, ctx, history);
+    } else {
+      // Fallback на старые обработчики для обратной совместимости
+      const interactionType = chatContext.getInteractionType();
+      const messageContent = chatContext.getMessageContent();
+
+      switch (interactionType) {
+        case InteractionType.TEXT:
+          if (this.handlers.onText) {
+            await this.handlers.onText(ctx, messageContent, history);
+          }
+          break;
+        case InteractionType.VOICE:
+          if (this.handlers.onAudio) {
+            await this.handlers.onAudio(
+              ctx,
+              chatContext.getMediaContent(),
+              history
+            );
+          }
+          break;
+        case InteractionType.IMAGE:
+          if (this.handlers.onPhoto) {
+            // Создаем fake photos array для обратной совместимости
+            const photos = [
+              { file_id: "fake", file_unique_id: "fake", width: 0, height: 0 },
+            ];
+            await this.handlers.onPhoto(ctx, photos as any, history);
+          }
+          break;
+        case InteractionType.FORWARD:
+          if (this.handlers.onForward) {
+            // Создаем fake message для обратной совместимости
+            const fakeMessage = { text: messageContent } as Message;
+            await this.handlers.onForward(ctx, fakeMessage, history);
+          }
+          break;
+      }
+    }
   }
 }

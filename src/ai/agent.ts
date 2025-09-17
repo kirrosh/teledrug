@@ -1,7 +1,9 @@
-import { generateText, type ModelMessage, type GenerateTextResult } from "ai";
+import { generateText, type CoreMessage, type GenerateTextResult } from "ai";
 import { openai } from "@ai-sdk/openai";
 import type { Integration } from "../integrations/base/integration";
 import type { ProgressStep } from "../core/response-manager";
+import { ChatContext } from "../core/chat-context";
+import { InteractionType } from "../types/interaction-types";
 
 export interface AIAgentConfig {
   openaiApiKey: string;
@@ -19,24 +21,143 @@ export interface ProgressCallback {
 export class AIAgent {
   private config: AIAgentConfig;
   private integrations: Integration[];
-  private tools: Record<string, any> = {};
 
   constructor(config: AIAgentConfig, integrations: Integration[]) {
     this.config = config;
     this.integrations = integrations;
     process.env.OPENAI_API_KEY = config.openaiApiKey;
-    this.setupTools();
   }
 
-  private setupTools(): void {
-    for (const integration of this.integrations) {
-      const integrationTools = integration.getTools();
-      for (const { name, tool } of integrationTools) {
-        this.tools[name] = tool;
+  // Новый основной метод для обработки сообщений через ChatContext
+  async processMessage(
+    chatContext: ChatContext,
+    conversationHistory?: string[],
+    progressCallback?: ProgressCallback
+  ): Promise<GenerateTextResult<Record<string, any>, any>> {
+    try {
+      // Уведомляем о начале обработки
+      if (progressCallback?.onThinking) {
+        await progressCallback.onThinking();
+      }
+
+      // Специальная обработка для голосовых сообщений
+      if (chatContext.getInteractionType() === InteractionType.VOICE) {
+        await this.processVoiceMessage(chatContext, progressCallback);
+      }
+
+      // Получаем доступные инструменты через ChatContext
+      const availableTools = chatContext.getAvailableTools();
+
+      // Строим сообщения для AI SDK
+      const systemPrompt = this.buildSystemPrompt(chatContext);
+      const messages = chatContext.buildMessages(systemPrompt, conversationHistory);
+
+      // Определяем модель на основе типа взаимодействия
+      const model = this.selectModel(chatContext.getInteractionType());
+
+      // Прогнозируем возможные tool calls и показываем прогресс
+      await this.showPredictedProgress(chatContext, progressCallback);
+
+      // Используем Vercel AI SDK для генерации ответа
+      const result = await generateText({
+        model,
+        messages,
+        tools: availableTools,
+      });
+
+      // Уведомляем о результатах tool calls
+      if (result.toolCalls && result.toolResults && progressCallback?.onToolResult) {
+        for (let i = 0; i < result.toolCalls.length; i++) {
+          const toolCall = result.toolCalls[i];
+          const toolResult = result.toolResults[i];
+          if (toolCall && toolResult) {
+            await progressCallback.onToolResult(toolCall.toolName, toolResult);
+          }
+        }
+      }
+
+      return result;
+    } catch (error) {
+      console.error("Ошибка в AI агенте:", error);
+      throw new Error(`Ошибка обработки запроса: ${error}`);
+    }
+  }
+
+  // Обработка голосовых сообщений с помощью Whisper
+  private async processVoiceMessage(
+    _chatContext: ChatContext,
+    progressCallback?: ProgressCallback
+  ): Promise<void> {
+    if (progressCallback?.onToolCall) {
+      await progressCallback.onToolCall({
+        type: 'processing',
+        message: 'Распознаю голосовое сообщение...',
+        emoji: '🎤'
+      });
+    }
+
+    // Здесь будет логика распознавания речи через Whisper API
+    // Результат обновит messageContent в chatContext
+    // TODO: Реализовать интеграцию с Whisper API
+  }
+
+  // Выбор модели в зависимости от типа взаимодействия
+  private selectModel(interactionType: InteractionType) {
+    // Используем только gpt-5-nano для всех типов взаимодействий
+    return openai(this.config.model || "gpt-5-nano");
+  }
+
+  // Построение системного промпта с учетом контекста
+  private buildSystemPrompt(chatContext: ChatContext): string {
+    const interactionType = chatContext.getInteractionType();
+    const integrationsList = this.integrations
+      .map((i) => `- ${i.getName()}: ${i.getDescription()}`)
+      .join("\n");
+
+    let basePrompt = `Ты - AI ассистент с доступом к следующим интеграциям:
+${integrationsList}
+
+Отвечай на русском языке.
+Будь вежливым и профессиональным.`;
+
+    // Добавляем специфичные инструкции для разных типов взаимодействий
+    switch (interactionType) {
+      case InteractionType.VOICE:
+        basePrompt += `\n\nПользователь отправил голосовое сообщение. У тебя есть доступ ко всем инструментам.`;
+        break;
+      case InteractionType.IMAGE:
+        basePrompt += `\n\nПользователь отправил изображение с подписью. Используй только текст подписи для анализа и создай событие в календаре, если это необходимо. Доступен только инструмент createEvent.
+        ВАЖНО: У тебя нет возможности анализировать содержимое изображений, работай только с текстом подписи.`;
+        break;
+      case InteractionType.FORWARD:
+        basePrompt += `\n\nПользователь переслал сообщение. Проанализируй контент и создай событие в календаре, если это необходимо. Доступен только инструмент createEvent.`;
+        break;
+    }
+
+    return basePrompt;
+  }
+
+  // Прогнозирование и показ прогресса
+  private async showPredictedProgress(
+    chatContext: ChatContext,
+    progressCallback?: ProgressCallback
+  ): Promise<void> {
+    if (!progressCallback?.onToolCall) return;
+
+    const possibleTools = this.predictToolsFromMessage(
+      chatContext.getMessageContent()
+    );
+
+    if (possibleTools.length > 0) {
+      const primaryTool = possibleTools[0];
+      if (primaryTool) {
+        const progressStep = this.getProgressStepForTool(primaryTool);
+        await progressCallback.onToolCall(progressStep);
       }
     }
   }
 
+  // Устаревшие методы - оставляем для обратной совместимости
   async chat(
     userMessage: string,
     conversationHistory?: string[]
@@ -49,64 +170,16 @@ export class AIAgent {
     conversationHistory?: string[],
     progressCallback?: ProgressCallback
   ): Promise<GenerateTextResult<Record<string, any>, any>> {
-    try {
-      // Уведомляем о начале обработки
-      if (progressCallback?.onThinking) {
-        await progressCallback.onThinking();
-      }
+    // Создаем ChatContext для обратной совместимости
+    const chatContext = new ChatContext({
+      interactionType: InteractionType.TEXT,
+      userId: this.config.userId,
+      chatId: this.config.userId, // используем userId как chatId для совместимости
+      messageContent: userMessage,
+      integrations: this.integrations
+    });
 
-      const systemPrompt = this.buildSystemPrompt();
-      const messages = this.buildConversationMessages(
-        systemPrompt,
-        userMessage,
-        conversationHistory
-      );
-
-      // Прогнозируем возможные tool calls на основе сообщения пользователя
-      // и показываем прогресс заранее
-      const possibleTools = this.predictToolsFromMessage(userMessage);
-
-      let result: GenerateTextResult<Record<string, any>, any>;
-
-      if (possibleTools.length > 0 && progressCallback?.onToolCall) {
-        // Показываем прогресс для наиболее вероятного tool
-        const primaryTool = possibleTools[0];
-        if (primaryTool) {
-          const progressStep = this.getProgressStepForTool(primaryTool);
-          await progressCallback.onToolCall(progressStep);
-        }
-      }
-
-      result = await generateText({
-        model: openai(this.config.model || "gpt-5-nano"),
-        messages,
-        tools: this.tools,
-      });
-
-      // Если были вызваны другие tools, уведомляем о них
-      if (result.toolCalls && progressCallback?.onToolResult) {
-        for (let i = 0; i < result.toolCalls.length; i++) {
-          const toolCall = result.toolCalls[i];
-          const toolResult = result.toolResults[i];
-          if (toolCall && toolResult) {
-            await progressCallback.onToolResult(toolCall.toolName, toolResult);
-          }
-        }
-      }
-
-      if (!result.text && result.toolCalls && result.toolResults) {
-        const formattedResponse = this.formatToolResults(result);
-        return {
-          ...result,
-          text: formattedResponse,
-        };
-      }
-
-      return result;
-    } catch (error) {
-      console.error("Ошибка в AI агенте:", error);
-      throw new Error(`Ошибка обработки запроса: ${error}`);
-    }
+    return this.processMessage(chatContext, conversationHistory, progressCallback);
   }
 
   private formatToolResults(
@@ -142,50 +215,6 @@ export class AIAgent {
     return responses.length > 0 ? responses.join("\n\n") : "Задача выполнена!";
   }
 
-  private buildSystemPrompt(): string {
-    const integrationsList = this.integrations
-      .map((i) => `- ${i.getName()}: ${i.getDescription()}`)
-      .join("\n");
-
-    return `Ты - AI ассистент с доступом к следующим интеграциям:
-${integrationsList}
-
-Используй доступные инструменты для выполнения задач пользователя.
-Отвечай на русском языке.
-Будь вежливым и профессиональным.`;
-  }
-
-  private buildConversationMessages(
-    systemPrompt: string,
-    userMessage: string,
-    conversationHistory?: string[]
-  ): ModelMessage[] {
-    const messages: ModelMessage[] = [
-      {
-        role: "system",
-        content: systemPrompt,
-      },
-    ];
-
-    if (conversationHistory && conversationHistory.length > 0) {
-      for (let i = 0; i < conversationHistory.length; i++) {
-        const content = conversationHistory[i];
-        if (content) {
-          messages.push({
-            role: i % 2 === 0 ? ("user" as const) : ("assistant" as const),
-            content,
-          });
-        }
-      }
-    }
-
-    messages.push({
-      role: "user",
-      content: userMessage,
-    });
-
-    return messages;
-  }
 
   private predictToolsFromMessage(message: string): string[] {
     const lowerMessage = message.toLowerCase();

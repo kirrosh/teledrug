@@ -7,6 +7,7 @@ import { tool, type TypedToolResult } from "ai";
 import { z } from "zod";
 import { createDAVClient } from "tsdav";
 import type { ProgressStep } from "../../core/response-manager";
+import { InteractionType } from "../../types/interaction-types";
 
 interface CalendarEvent {
   id?: string;
@@ -110,7 +111,42 @@ export class YandexCalendarIntegration extends Integration {
     });
   }
 
-  async authenticate(credentials: IntegrationCredentials): Promise<boolean> {
+  protected initializeToolsMetadata(): void {
+    // Инициализируем метаданные для каждого инструмента
+    this.toolsMetadata.set('getEvents', {
+      name: 'getEvents',
+      permissions: { read: true, write: false },
+      supportedInteractionTypes: [InteractionType.TEXT, InteractionType.VOICE],
+      progressMessage: 'Проверяю календарь...',
+      progressEmoji: '📅',
+      description: 'Получение списка событий из календаря за определенный период'
+    });
+
+    this.toolsMetadata.set('getLastEvents', {
+      name: 'getLastEvents',
+      permissions: { read: true, write: false },
+      supportedInteractionTypes: [InteractionType.TEXT, InteractionType.VOICE],
+      progressMessage: 'Загружаю последние события...',
+      progressEmoji: '📊',
+      description: 'Получение последних событий из календаря'
+    });
+
+    this.toolsMetadata.set('createEvent', {
+      name: 'createEvent',
+      permissions: { read: false, write: true },
+      supportedInteractionTypes: [
+        InteractionType.TEXT,
+        InteractionType.VOICE,
+        InteractionType.IMAGE,
+        InteractionType.FORWARD
+      ],
+      progressMessage: 'Создаю событие в календаре...',
+      progressEmoji: '📝',
+      description: 'Создание нового события в календаре'
+    });
+  }
+
+  override async authenticate(credentials: IntegrationCredentials): Promise<boolean> {
     try {
       this.calendarUrl = credentials.calendarUrl;
       this.username = credentials.username;
@@ -333,14 +369,12 @@ export class YandexCalendarIntegration extends Integration {
     return date;
   }
 
-  getTools(): IntegrationTool[] {
+  override getTools(): IntegrationTool[] {
     return [
       {
         name: "getEvents",
         tool: tool({
-          description: `Получить список событий из календаря пользователя за определенный период.
-            Можно указать диапазон дат для фильтрации.
-            Используй этот инструмент когда пользователь спрашивает про события на определенную дату, неделю или месяц.`,
+          description: this.getToolMetadata('getEvents').description,
           inputSchema: getEventsSchema,
           execute: async ({ dateRange, limit }) => {
             try {
@@ -416,12 +450,7 @@ export class YandexCalendarIntegration extends Integration {
       {
         name: "getLastEvents",
         tool: tool({
-          description: `Получить последние события из календаря пользователя (отсортированные по дате).
-            Используй этот инструмент когда пользователь спрашивает:
-            - "покажи мои последние события"
-            - "что у меня в календаре?"
-            - "покажи 5 последних встреч"
-            - или просит общий обзор календаря`,
+          description: this.getToolMetadata('getLastEvents').description,
           inputSchema: getLastEventsSchema,
           execute: async ({ count = 5 }) => {
             try {
@@ -470,13 +499,12 @@ export class YandexCalendarIntegration extends Integration {
       {
         name: "createEvent",
         tool: tool({
-          description: `Создать новое событие в календаре пользователя.
+          description: this.getToolMetadata('createEvent').description + `
             ВАЖНО: Сразу создавай событие из доступной информации, не задавай лишних вопросов!
             - Если указано только время - используй сегодняшнюю дату
             - Если не указана длительность - по умолчанию 1 час
             - Если не указано название - извлеки из контекста или используй "Встреча"
-            - После создания спроси, нужно ли что-то изменить
-            Используй этот инструмент когда пользователь просит создать встречу, событие, напоминание.`,
+            - После создания спроси, нужно ли что-то изменить`,
           inputSchema: createEventSchema,
           execute: async ({
             summary,
@@ -553,7 +581,7 @@ END:VCALENDAR`;
     ];
   }
 
-  formatToolResult(
+  override formatToolResult(
     toolName: string,
     result: TypedToolResult<Record<string, any>>
   ): string {
@@ -758,39 +786,13 @@ END:VCALENDAR`;
     }
   }
 
-  getProgressStep(toolName: string): ProgressStep {
-    const progressMappings: Record<string, ProgressStep> = {
-      getEvents: {
-        type: "tool_call",
-        message: "Проверяю календарь...",
-        emoji: "📅",
-        metadata: { toolName, integration: "YandexCalendar" },
-      },
-      getLastEvents: {
-        type: "tool_call",
-        message: "Загружаю последние события...",
-        emoji: "📊",
-        metadata: { toolName, integration: "YandexCalendar" },
-      },
-      createEvent: {
-        type: "tool_call",
-        message: "Создаю событие в календаре...",
-        emoji: "📝",
-        metadata: { toolName, integration: "YandexCalendar" },
-      },
-    };
-
-    return (
-      progressMappings[toolName] || {
-        type: "tool_call",
-        message: "Выполняю операцию с календарем...",
-        emoji: "⚙️",
-        metadata: { toolName, integration: "YandexCalendar" },
-      }
-    );
+  override getProgressStep(toolName: string): ProgressStep {
+    // Используем новую систему метаданных вместо статических mapping'ов
+    return this.getToolProgressStep(toolName);
   }
 
-  async disconnect(): Promise<void> {
+
+  override async disconnect(): Promise<void> {
     this.client = null;
     this.isAuthenticated = false;
   }
