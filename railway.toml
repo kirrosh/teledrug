@@ -1,0 +1,14 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "bun run src/index.ts"
+healthcheckPath = "/"
+restartPolicyType = "always"
+
+[env]
+TELEGRAM_BOT_TOKEN = ""
+OPENAI_API_KEY = ""
+DATABASE_URL = "${{ Postgres.DATABASE_URL }}"
+NODE_ENV = "production"
+PORT = "3000"
