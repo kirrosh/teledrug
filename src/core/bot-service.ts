@@ -29,6 +29,7 @@ export class BotService {
 
     this.registerIntegrations();
     this.setupHandlers();
+    this.setupUserEnsuring();
     this.startCleanupInterval();
   }
 
@@ -58,6 +59,12 @@ export class BotService {
       onRemoveIntegrationCommand: async (ctx: Context, args: string[]) => {
         await this.handleRemoveIntegrationCommand(ctx, args);
       },
+    });
+  }
+
+  private setupUserEnsuring(): void {
+    this.telegramBot.setEnsureUserCallback(async (userId: number, username?: string) => {
+      await this.userManager.getOrCreateUser(userId, username);
     });
   }
 

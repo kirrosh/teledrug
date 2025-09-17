@@ -36,6 +36,7 @@ export class TelegramBot {
   private calendarSetup: CalendarSetupHandler;
   private calendarTest: CalendarTestHandler;
   private chatMessages: Map<number, number[]> = new Map(); // chatId -> messageIds
+  private ensureUserCallback?: (userId: number, username?: string) => Promise<void>;
 
   constructor(config: TelegramBotConfig) {
     this.bot = new Bot(config.token);
@@ -48,6 +49,32 @@ export class TelegramBot {
 
   setHandlers(handlers: Partial<MessageHandlers>) {
     this.handlers = { ...this.handlers, ...handlers };
+  }
+
+  setEnsureUserCallback(callback: (userId: number, username?: string) => Promise<void>) {
+    this.ensureUserCallback = callback;
+  }
+
+  private async ensureUser(ctx: Context): Promise<boolean> {
+    const userId = ctx.from?.id;
+    const username = ctx.from?.username;
+
+    if (!userId) {
+      await ctx.reply("❌ Не удалось определить пользователя");
+      return false;
+    }
+
+    if (this.ensureUserCallback) {
+      try {
+        await this.ensureUserCallback(userId, username);
+      } catch (error) {
+        console.error("Error ensuring user:", error);
+        await ctx.reply("❌ Произошла ошибка при создании пользователя");
+        return false;
+      }
+    }
+
+    return true;
   }
 
   private setupDefaultHandlers() {
@@ -119,6 +146,8 @@ export class TelegramBot {
 
     // Команды интеграций - обработчики задаются через setHandlers
     this.bot.command("integrations", async (ctx) => {
+      if (!(await this.ensureUser(ctx))) return;
+
       if (this.handlers.onIntegrationsCommand) {
         await this.handlers.onIntegrationsCommand(ctx);
       } else {
@@ -127,6 +156,8 @@ export class TelegramBot {
     });
 
     this.bot.command("remove_integration", async (ctx) => {
+      if (!(await this.ensureUser(ctx))) return;
+
       const args = ctx.message?.text?.split(" ").slice(1) || [];
       if (this.handlers.onRemoveIntegrationCommand) {
         await this.handlers.onRemoveIntegrationCommand(ctx, args);
@@ -137,11 +168,15 @@ export class TelegramBot {
 
     // Add Yandex Calendar command
     this.bot.command("add_yandex_calendar", async (ctx) => {
+      if (!(await this.ensureUser(ctx))) return;
+
       await this.calendarSetup.handleAddYandexCalendar(ctx);
     });
 
     // Test calendar command
     this.bot.command("test_calendar", async (ctx) => {
+      if (!(await this.ensureUser(ctx))) return;
+
       await this.calendarTest.handleTestCalendarCommand(ctx);
     });
 
