@@ -3,6 +3,7 @@ import type { Message } from "grammy/types";
 import { ConversationHistory } from "../modules/conversation-history";
 import { CalendarSetupHandler } from "./handlers/calendar-setup";
 import { CalendarTestHandler } from "./handlers/calendar-test";
+import type { UserManager } from "../core/user-manager";
 
 export interface TelegramBotConfig {
   token: string;
@@ -53,6 +54,10 @@ export class TelegramBot {
 
   setEnsureUserCallback(callback: (userId: number, username?: string) => Promise<void>) {
     this.ensureUserCallback = callback;
+  }
+
+  setUserManager(userManager: UserManager) {
+    this.calendarSetup.setUserManager(userManager);
   }
 
   private async ensureUser(ctx: Context): Promise<boolean> {

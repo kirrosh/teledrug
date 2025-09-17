@@ -66,6 +66,9 @@ export class BotService {
     this.telegramBot.setEnsureUserCallback(async (userId: number, username?: string) => {
       await this.userManager.getOrCreateUser(userId, username);
     });
+
+    // Pass UserManager to the bot for calendar setup handler
+    this.telegramBot.setUserManager(this.userManager);
   }
 
   private async handleIntegrationsCommand(ctx: Context): Promise<void> {

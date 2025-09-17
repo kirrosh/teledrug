@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
-import { UserRepository } from "../../storage/database/repositories/user-repository";
 import { createDAVClient } from "tsdav";
+import type { UserManager } from "../../core/user-manager";
 
 interface SetupSession {
   step: "url" | "password";
@@ -13,7 +13,11 @@ interface SetupSession {
 
 export class CalendarSetupHandler {
   private setupSessions = new Map<number, SetupSession>();
-  private userRepository = new UserRepository();
+  private userManager?: UserManager;
+
+  setUserManager(userManager: UserManager) {
+    this.userManager = userManager;
+  }
 
   async handleAddYandexCalendar(ctx: Context) {
     const userId = ctx.from?.id;
@@ -187,15 +191,18 @@ export class CalendarSetupHandler {
       throw new Error("Incomplete integration data");
     }
 
-    await this.userRepository.addIntegration(
+    if (!this.userManager) {
+      throw new Error("UserManager not set");
+    }
+
+    await this.userManager.addUserIntegration(
       userId,
       "YandexCalendar",
       {
         calendarUrl: data.url,
         username: data.username,
         password: data.password,
-      },
-      undefined
+      }
     );
   }
 
