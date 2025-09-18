@@ -4,7 +4,53 @@ import { TelegramClientError } from "../errors"
 import { UserConfigStorage } from "./user-config-storage"
 import { AIAgentFactory } from "./ai-agent"
 import { MessageHistory } from "./message-history"
+import { IntegrationRegistry } from "./integration-registry"
 import type { BotConfig, UpdateContext } from "../types"
+
+// Helper function to generate response from tool results
+const generateResponseFromToolResults = (toolResults: any[]): string => {
+  if (!toolResults || toolResults.length === 0) {
+    return "❌ Извините, не удалось получить результаты."
+  }
+
+  let response = ""
+
+  for (const toolResult of toolResults) {
+    if (toolResult.toolName === "getEvents") {
+      const output = toolResult.output
+      if (output?.success && output?.events) {
+        if (output.events.length === 0) {
+          response += "📅 У вас нет событий на этот период.\n"
+        } else {
+          response += `📅 **События на неделе:**\n\n`
+          output.events.forEach((event: any, index: number) => {
+            const date = new Date(event.date).toLocaleDateString('ru-RU', {
+              weekday: 'long',
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            })
+            response += `${index + 1}. **${event.title}**\n`
+            response += `   📍 ${date}\n`
+            if (event.description) {
+              response += `   📝 ${event.description}\n`
+            }
+            response += "\n"
+          })
+          if (output.message) {
+            response += `ℹ️ ${output.message}`
+          }
+        }
+      } else {
+        response += "❌ Ошибка при получении событий календаря.\n"
+      }
+    }
+  }
+
+  return response.trim() || "❌ Извините, не удалось обработать результаты."
+}
 
 // Service interface
 export interface TelegramClient {
@@ -22,6 +68,7 @@ const makeTelegramClient = (config: BotConfig) => Effect.gen(function* () {
   const userConfigStorage = yield* UserConfigStorage
   const aiAgentFactory = yield* AIAgentFactory
   const messageHistory = yield* MessageHistory
+  const integrationRegistry = yield* IntegrationRegistry
 
   // Create bot instance directly
   const bot = new Bot(config.telegramToken)
@@ -106,10 +153,28 @@ const makeTelegramClient = (config: BotConfig) => Effect.gen(function* () {
             // Process message through AI
             const result = yield* aiAgent.processText(userId, text, history)
 
-            // Add AI response to history
-            yield* messageHistory.addAssistantMessage(chatId, result.text)
+            console.log("🔍 AI Agent result:", JSON.stringify(result, null, 2))
 
-            return result.text
+            // Handle different response types from AI SDK v5
+            let responseText = result.text?.trim() || ""
+
+            // If no direct text but we have tool results, generate response from them
+            if (!responseText && result.toolResults && result.toolResults.length > 0) {
+              console.log("🔧 Processing tool results to generate response...")
+              responseText = generateResponseFromToolResults(result.toolResults)
+            }
+
+            // Final fallback
+            if (!responseText) {
+              responseText = "❌ Извините, не удалось сформировать ответ."
+            }
+
+            console.log("📝 Final response text:", responseText)
+
+            // Add AI response to history
+            yield* messageHistory.addAssistantMessage(chatId, responseText)
+
+            return responseText
           }).pipe(
             Effect.catchAll(error => {
               console.error("AI processing error:", error)
@@ -117,8 +182,12 @@ const makeTelegramClient = (config: BotConfig) => Effect.gen(function* () {
             })
           )
 
-          // Run the effect and get result
-          const response = await Effect.runPromise(processEffect)
+          // Run the effect with proper context including IntegrationRegistry
+          const response = await Effect.runPromise(
+            processEffect.pipe(
+              Effect.provide(Layer.succeed(IntegrationRegistry, integrationRegistry))
+            )
+          )
 
           await ctx.reply(response)
           console.log(`✅ Отправлен AI ответ для ${userId}`)

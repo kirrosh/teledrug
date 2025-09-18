@@ -1,7 +1,17 @@
-import { Effect, Context, Layer, Schema, Cache, Duration } from "effect";
+import {
+  Effect,
+  Context,
+  Layer,
+  Schema,
+  Cache,
+  Duration,
+  Console,
+} from "effect";
 import { generateText, type GenerateTextResult } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { AIAgentError } from "../errors";
+import { IntegrationRegistry } from "./integration-registry";
+import { ToolError } from "../types/integrations";
 
 // AI Agent Configuration Schema
 const AIAgentConfigSchema = Schema.Struct({
@@ -31,13 +41,21 @@ export interface AIAgent {
   readonly processMessage: (
     context: SimpleChatContext,
     conversationHistory?: readonly string[]
-  ) => Effect.Effect<GenerateTextResult<any, any>, AIAgentError>;
+  ) => Effect.Effect<
+    GenerateTextResult<any, any>,
+    AIAgentError,
+    IntegrationRegistry
+  >;
 
   readonly processText: (
     userId: string | number,
     text: string,
     conversationHistory?: readonly string[]
-  ) => Effect.Effect<GenerateTextResult<any, any>, AIAgentError>;
+  ) => Effect.Effect<
+    GenerateTextResult<any, any>,
+    AIAgentError,
+    IntegrationRegistry
+  >;
 }
 
 // Service tag
@@ -65,7 +83,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
     const processMessage = (
       context: SimpleChatContext,
       conversationHistory: readonly string[] = []
-    ): Effect.Effect<GenerateTextResult<any, any>, AIAgentError> =>
+    ) =>
       Effect.gen(function* () {
         try {
           console.log(
@@ -104,17 +122,55 @@ const makeAIAgent = (config: AIAgentConfig) =>
             }`
           );
 
-          // Call OpenAI API through Vercel AI SDK
+          // Get tools from integration registry
+          const integrationRegistry = yield* IntegrationRegistry;
+          const tools = yield* integrationRegistry
+            .getAllTools(validatedContext.interactionType || "TEXT")
+            .pipe(
+              Effect.mapError(
+                (toolError) =>
+                  new AIAgentError({
+                    message: `Failed to load tools: ${toolError.message}`,
+                    cause: toolError,
+                  })
+              )
+            );
+
+          yield* Console.log(
+            `🔧 Found ${
+              Object.keys(tools).length
+            } tools for interaction type: ${
+              validatedContext.interactionType || "TEXT"
+            }`
+          );
+
+          // Call OpenAI API with tools - they execute automatically in AI SDK v5
           const result = yield* Effect.promise(() =>
             generateText({
               model,
               messages,
+              tools: Object.keys(tools).length > 0 ? tools : undefined,
             })
           );
 
-          console.log(
-            `✅ AI response generated: ${result.text.substring(0, 100)}...`
-          );
+          // Tools уже выполнены автоматически, просто логируем
+          if (result.toolCalls && result.toolCalls.length > 0) {
+            yield* Console.log(`🚀 AI called ${result.toolCalls.length} tools`);
+
+            for (const toolCall of result.toolCalls) {
+              yield* Console.log(
+                `✅ Tool ${toolCall.toolName} executed successfully`
+              );
+            }
+          }
+
+          if (result.toolResults && result.toolResults.length > 0) {
+            yield* Console.log(
+              `📊 Received ${result.toolResults.length} tool results`
+            );
+          }
+
+          console.log(`✅ AI response: ${result.text.substring(0, 100)}...`);
 
           return result;
         } catch (cause) {
@@ -131,7 +187,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
       userId: string | number,
       text: string,
       conversationHistory: readonly string[] = []
-    ): Effect.Effect<GenerateTextResult<any, any>, AIAgentError> => {
+    ) => {
       const context: SimpleChatContext = {
         userId,
         chatId: userId, // Use userId as chatId for simplicity
@@ -254,9 +310,11 @@ const makeAIAgentFactory = (baseConfig: AIAgentConfig) =>
           return agent;
         }).pipe(
           Effect.tap(() =>
-            Effect.sync(() => console.log(`📦 Cached agent for user: ${userId}`))
+            Effect.sync(() =>
+              console.log(`📦 Cached agent for user: ${userId}`)
+            )
           )
-        )
+        ),
     });
 
     const createAgent = (
@@ -285,18 +343,24 @@ const makeAIAgentFactory = (baseConfig: AIAgentConfig) =>
 
         // Cache.get already handles the cache miss case
         const cacheStats = yield* agentCache.cacheStats;
-        console.log(`📊 Cache stats - Hits: ${cacheStats.hits}, Misses: ${cacheStats.misses}, Size: ${cacheStats.size}`);
+        console.log(
+          `📊 Cache stats - Hits: ${cacheStats.hits}, Misses: ${cacheStats.misses}, Size: ${cacheStats.size}`
+        );
 
         return agent;
       });
 
     // Optional: Add cache management methods
     const invalidateUser = (userId: string | number) =>
-      agentCache.invalidate(userId).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => console.log(`🗑️ Invalidated cache for user: ${userId}`))
-        )
-      );
+      agentCache
+        .invalidate(userId)
+        .pipe(
+          Effect.tap(() =>
+            Effect.sync(() =>
+              console.log(`🗑️ Invalidated cache for user: ${userId}`)
+            )
+          )
+        );
 
     const clearCache = () =>
       agentCache.invalidateAll.pipe(
