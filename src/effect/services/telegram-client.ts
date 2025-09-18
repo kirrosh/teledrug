@@ -1,6 +1,7 @@
-import { Effect, Context, Layer } from "effect"
+import { Effect, Context, Layer, Option } from "effect"
 import { Bot } from "grammy"
 import { TelegramClientError } from "../errors"
+import { UserConfigStorage } from "./user-config-storage"
 import type { BotConfig, UpdateContext } from "../types"
 
 // Service interface
@@ -16,6 +17,7 @@ export const TelegramClient = Context.GenericTag<TelegramClient>("@services/Tele
 
 // Implementation
 const makeTelegramClient = (config: BotConfig) => Effect.gen(function* () {
+  const userConfigStorage = yield* UserConfigStorage
 
   // Create bot instance directly
   const bot = new Bot(config.telegramToken)
@@ -33,6 +35,50 @@ const makeTelegramClient = (config: BotConfig) => Effect.gen(function* () {
       bot.command("clear", async (ctx) => {
         await ctx.reply("🗑️ История очищена!")
         console.log(`🗑️ Очистка истории для чата ${ctx.chat.id}`)
+      })
+
+      bot.command("integrations", async (ctx) => {
+        const chatId = ctx.chat.id
+        const userId = ctx.from?.id || chatId
+
+        console.log(`📊 Запрос интеграций для пользователя ${userId}`)
+
+        try {
+          // Get user integrations using Effect
+          const effect = userConfigStorage.get(userId).pipe(
+            Effect.map(configOption => {
+              if (Option.isSome(configOption)) {
+                const config = configOption.value
+                if (config.integrations.length === 0) {
+                  return "📊 **Интеграции:**\n\nУ вас пока нет настроенных интеграций."
+                }
+
+                const integrationsText = config.integrations
+                  .map(integration => {
+                    const status = integration.enabled ? "✅" : "❌"
+                    return `${status} **${integration.name}**`
+                  })
+                  .join("\n")
+
+                return `📊 **Интеграции:**\n\n${integrationsText}`
+              } else {
+                return "📊 **Интеграции:**\n\nПользователь не найден. Используйте /start для инициализации."
+              }
+            }),
+            Effect.catchAll(error => {
+              console.error("Ошибка при получении интеграций:", error)
+              return Effect.succeed("❌ Ошибка при получении списка интеграций.")
+            })
+          )
+
+          // Run the effect and get result
+          const result = await Effect.runPromise(effect)
+
+          await ctx.reply(result, { parse_mode: "Markdown" })
+        } catch (error) {
+          console.error("Ошибка в команде /integrations:", error)
+          await ctx.reply("❌ Произошла ошибка при получении интеграций.")
+        }
       })
 
       // Handle text messages with simple echo
@@ -59,6 +105,7 @@ const makeTelegramClient = (config: BotConfig) => Effect.gen(function* () {
           bot.api.setMyCommands([
             { command: "start", description: "🚀 Запустить бота" },
             { command: "clear", description: "🧹 Очистить историю" },
+            { command: "integrations", description: "📊 Показать интеграции" },
           ])
         )
 
