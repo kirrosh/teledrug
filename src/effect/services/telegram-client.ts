@@ -1,4 +1,4 @@
-import { Effect, Context, Layer, Option } from "effect"
+import { Effect, Context, Layer } from "effect"
 import { Bot } from "grammy"
 import { TelegramClientError } from "../errors"
 import { UserConfigStorage } from "./user-config-storage"
@@ -44,29 +44,27 @@ const makeTelegramClient = (config: BotConfig) => Effect.gen(function* () {
         console.log(`📊 Запрос интеграций для пользователя ${userId}`)
 
         try {
-          // Get user integrations using Effect
+          // Get user integrations using Effect Cache
           const effect = userConfigStorage.get(userId).pipe(
-            Effect.map(configOption => {
-              if (Option.isSome(configOption)) {
-                const config = configOption.value
-                if (config.integrations.length === 0) {
-                  return "📊 **Интеграции:**\n\nУ вас пока нет настроенных интеграций."
-                }
-
-                const integrationsText = config.integrations
-                  .map(integration => {
-                    const status = integration.enabled ? "✅" : "❌"
-                    return `${status} **${integration.name}**`
-                  })
-                  .join("\n")
-
-                return `📊 **Интеграции:**\n\n${integrationsText}`
-              } else {
-                return "📊 **Интеграции:**\n\nПользователь не найден. Используйте /start для инициализации."
+            Effect.map(config => {
+              if (config.integrations.length === 0) {
+                return "📊 **Интеграции:**\n\nУ вас пока нет настроенных интеграций."
               }
+
+              const integrationsText = config.integrations
+                .map(integration => {
+                  const status = integration.enabled ? "✅" : "❌"
+                  return `${status} **${integration.name}**`
+                })
+                .join("\n")
+
+              return `📊 **Интеграции:**\n\n${integrationsText}`
             }),
             Effect.catchAll(error => {
               console.error("Ошибка при получении интеграций:", error)
+              if (error._tag === "UserConfigError" && error.message.includes("not found")) {
+                return Effect.succeed("📊 **Интеграции:**\n\nПользователь не найден. Используйте /start для инициализации.")
+              }
               return Effect.succeed("❌ Ошибка при получении списка интеграций.")
             })
           )
