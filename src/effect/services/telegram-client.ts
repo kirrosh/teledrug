@@ -2,6 +2,8 @@ import { Effect, Context, Layer } from "effect"
 import { Bot } from "grammy"
 import { TelegramClientError } from "../errors"
 import { UserConfigStorage } from "./user-config-storage"
+import { AIAgentFactory } from "./ai-agent"
+import { MessageHistory } from "./message-history"
 import type { BotConfig, UpdateContext } from "../types"
 
 // Service interface
@@ -18,6 +20,8 @@ export const TelegramClient = Context.GenericTag<TelegramClient>("@services/Tele
 // Implementation
 const makeTelegramClient = (config: BotConfig) => Effect.gen(function* () {
   const userConfigStorage = yield* UserConfigStorage
+  const aiAgentFactory = yield* AIAgentFactory
+  const messageHistory = yield* MessageHistory
 
   // Create bot instance directly
   const bot = new Bot(config.telegramToken)
@@ -79,16 +83,50 @@ const makeTelegramClient = (config: BotConfig) => Effect.gen(function* () {
         }
       })
 
-      // Handle text messages with simple echo
+      // Handle text messages with AI Agent
       bot.on("message:text", async (ctx) => {
         const chatId = ctx.chat.id
+        const userId = ctx.from?.id || chatId
         const text = ctx.message.text
 
-        // Simple echo response for now
-        const response = `Получил ваше сообщение: "${text}"`
-        await ctx.reply(response)
+        console.log(`📨 Получено сообщение от ${userId}: ${text}`)
 
-        console.log(`📨 Обработано сообщение от ${chatId}: ${text}`)
+        try {
+          // Create AI agent processing effect
+          const processEffect = Effect.gen(function* () {
+            // Get or create AI agent for user
+            const aiAgent = yield* aiAgentFactory.getOrCreateAgent(userId)
+
+            // Get conversation history
+            const history = yield* messageHistory.getHistory(chatId)
+
+            // Add user message to history
+            yield* messageHistory.addUserMessage(chatId, text)
+
+            // Process message through AI
+            const result = yield* aiAgent.processText(userId, text, history)
+
+            // Add AI response to history
+            yield* messageHistory.addAssistantMessage(chatId, result.text)
+
+            return result.text
+          }).pipe(
+            Effect.catchAll(error => {
+              console.error("AI processing error:", error)
+              return Effect.succeed(`❌ Извините, произошла ошибка при обработке сообщения: ${error}`)
+            })
+          )
+
+          // Run the effect and get result
+          const response = await Effect.runPromise(processEffect)
+
+          await ctx.reply(response)
+          console.log(`✅ Отправлен AI ответ для ${userId}`)
+
+        } catch (error) {
+          console.error("Ошибка при обработке сообщения:", error)
+          await ctx.reply("❌ Произошла ошибка при обработке вашего сообщения.")
+        }
       })
     }
 

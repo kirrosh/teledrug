@@ -24,3 +24,8 @@ export class ConfigurationError extends Data.TaggedError("ConfigurationError")<{
   message: string
   cause?: unknown
 }> {}
+
+export class AIAgentError extends Data.TaggedError("AIAgentError")<{
+  message: string
+  cause?: unknown
+}> {}

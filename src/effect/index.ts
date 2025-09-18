@@ -11,6 +11,10 @@ const program = Effect.gen(function* () {
     return yield* Effect.fail(new Error("TELEGRAM_BOT_TOKEN is required"))
   }
 
+  if (!process.env.OPENAI_API_KEY) {
+    return yield* Effect.fail(new Error("OPENAI_API_KEY is required"))
+  }
+
   yield* Console.log("✅ Конфигурация валидна")
 
   const botApp = yield* BotApplication

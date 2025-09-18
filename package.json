@@ -21,11 +21,11 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^2.0.24",
+    "@ai-sdk/openai": "^2.0.32",
     "@effect/platform": "^0.90.10",
     "@effect/platform-node": "^0.96.1",
     "@effect/schema": "^0.75.5",
-    "ai": "^5.0.34",
+    "ai": "^5.0.45",
     "effect": "^3.17.13",
     "grammy": "^1.38.2",
     "tsdav": "^2.1.5",
