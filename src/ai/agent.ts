@@ -46,6 +46,11 @@ export class AIAgent {
         console.log("🎤 Processing voice message (already transcribed)");
       }
 
+      // Передаем контекст во все интеграции
+      for (const integration of this.integrations) {
+        integration.setMessageContext(chatContext.getMetadata());
+      }
+
       // Получаем доступные инструменты через ChatContext
       const availableTools = chatContext.getAvailableTools();
 
@@ -85,7 +90,9 @@ export class AIAgent {
               const tool = tools.find((t) => t.name === toolCall.toolName);
               if (tool) {
                 // Получаем progressStep с метаданными из интеграции
-                const progressStep = integration.getProgressStep(toolCall.toolName);
+                const progressStep = integration.getProgressStep(
+                  toolCall.toolName
+                );
                 await progressCallback.onToolCall(progressStep);
                 break;
               }
@@ -118,11 +125,6 @@ export class AIAgent {
 
   // Выбор модели в зависимости от типа взаимодействия
   private selectModel(interactionType: InteractionType) {
-    // Для изображений используем модель с поддержкой vision
-    if (interactionType === InteractionType.IMAGE) {
-      return openai("gpt-4o");
-    }
-    // Для всех остальных типов используем gpt-5-nano
     return openai(this.config.model || "gpt-5-nano");
   }
 
@@ -184,7 +186,6 @@ ${integrationsList}
       progressCallback
     );
   }
-
 
   getIntegrations(): Integration[] {
     return this.integrations;

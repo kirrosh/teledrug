@@ -28,9 +28,22 @@ export abstract class Integration {
   // Новое: метаданные инструментов
   protected toolsMetadata: Map<string, ToolMetadata> = new Map();
 
+  // Контекст для текущего сообщения (передается при вызове tools)
+  protected currentMessageContext: any = null;
+
   constructor(config: IntegrationConfig) {
     this.config = config;
     this.initializeToolsMetadata();
+  }
+
+  // Установка контекста сообщения
+  setMessageContext(context: any): void {
+    this.currentMessageContext = context;
+  }
+
+  // Получение контекста сообщения
+  getMessageContext(): any {
+    return this.currentMessageContext;
   }
 
   // Абстрактный метод для инициализации метаданных

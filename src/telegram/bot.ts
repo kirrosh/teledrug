@@ -334,13 +334,35 @@ export class TelegramBot {
   // Методы для работы с файлами Telegram
   private async getFileUrl(ctx: Context, fileId: string): Promise<string> {
     try {
-      const file = await ctx.api.getFile(fileId);
-      if (!file.file_path) {
-        throw new Error("File path not available");
+      // Проверяем валидность file_id
+      if (!fileId || fileId.trim() === '') {
+        throw new Error("Invalid file_id provided");
       }
-      return `https://api.telegram.org/file/bot${this.bot.token}/${file.file_path}`;
+
+      console.log("🔍 Getting file info for fileId:", fileId);
+
+      // Правильное получение файла через API
+      const fileInfo = await ctx.api.getFile(fileId);
+
+      if (!fileInfo.file_path) {
+        throw new Error("File path not available in Telegram response");
+      }
+
+      // Получаем токен бота из конфигурации
+      const botToken = this.bot.token;
+      if (!botToken) {
+        throw new Error("Bot token not available");
+      }
+
+      const fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.file_path}`;
+      console.log("📁 File URL:", fileUrl);
+
+      return fileUrl;
     } catch (error) {
       console.error("Error getting file URL:", error);
+      if (error instanceof Error && error.message.includes('Bad Request')) {
+        throw new Error(`Invalid file_id or file not found: ${fileId}`);
+      }
       throw new Error(`Failed to get file URL: ${error}`);
     }
   }
@@ -422,7 +444,7 @@ export class TelegramBot {
   }
 
   // Метод для подготовки изображения к отправке в AI (конвертация в base64)
-  private async prepareImageForAI(imageBuffer: Buffer, caption: string, fileId: string): Promise<{ caption: string, imageData: string }> {
+  private async prepareImageForAI(imageBuffer: Buffer, caption: string): Promise<{ caption: string, imageData: string }> {
     try {
       console.log("🖼️ Preparing image for AI analysis...");
 
@@ -526,7 +548,7 @@ export class TelegramBot {
       const imageBuffer = await this.downloadFile(fileUrl, photo.file_id);
 
       // Подготавливаем изображение для отправки в AI
-      const imageData = await this.prepareImageForAI(imageBuffer, caption, photo.file_id);
+      const imageData = await this.prepareImageForAI(imageBuffer, caption);
 
       console.log("📝 Image prepared for AI");
 

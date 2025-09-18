@@ -11,6 +11,7 @@ export class ChatContext {
   private chatId: string | number;
   private messageContent: string;
   private mediaContent?: any; // для изображений/аудио
+  private metadata?: any; // для дополнительных данных (форварды, и т.д.)
   private availableIntegrations: Integration[];
 
   constructor(config: ChatContextConfig) {
@@ -19,6 +20,7 @@ export class ChatContext {
     this.chatId = config.chatId;
     this.messageContent = config.messageContent;
     this.mediaContent = config.mediaContent;
+    this.metadata = config.metadata;
     this.availableIntegrations = config.integrations;
   }
 
@@ -154,6 +156,11 @@ export class ChatContext {
 
   getMediaContent(): any {
     return this.mediaContent;
+  }
+
+  // Получить метаданные для контекста
+  getMetadata(): any {
+    return this.metadata;
   }
 
   // Сеттер для обновления content после обработки (например, после распознавания речи)

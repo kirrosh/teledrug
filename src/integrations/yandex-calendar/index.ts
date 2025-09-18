@@ -90,7 +90,6 @@ const getLastEventsSchema = z.object({
 
 const createEventSchema = z.object({
   summary: z.string().describe("Название события"),
-  description: z.string().optional().describe("Описание события"),
   startDate: z.string().describe("Дата и время начала в формате ISO"),
   endDate: z.string().describe("Дата и время окончания в формате ISO"),
   location: z.string().optional().describe("Место проведения"),
@@ -99,6 +98,8 @@ const createEventSchema = z.object({
 export class YandexCalendarIntegration extends Integration {
   private client: Awaited<ReturnType<typeof createDAVClient>> | null = null;
   private calendarUrl?: string;
+
+  // Убираем статический контекст - теперь используем универсальный через базовый класс
   private username?: string;
   private password?: string;
 
@@ -110,6 +111,8 @@ export class YandexCalendarIntegration extends Integration {
       version: "1.0.0",
     });
   }
+
+  // Убираем статические методы - теперь используем универсальный контекст из базового класса
 
   protected initializeToolsMetadata(): void {
     // Инициализируем метаданные для каждого инструмента
@@ -508,7 +511,6 @@ export class YandexCalendarIntegration extends Integration {
           inputSchema: createEventSchema,
           execute: async ({
             summary,
-            description,
             startDate,
             endDate,
             location,
@@ -531,6 +533,27 @@ export class YandexCalendarIntegration extends Integration {
                 "Z";
               const eventId = `event-${Date.now()}@yandex.ru`;
 
+              // Программно создаем описание события
+              const messageContext = this.getMessageContext();
+              let eventDescription = "🤖 Событие создано с помощью TeleDrug";
+
+              // Добавляем ссылку на Telegram если есть
+              if (messageContext && messageContext.telegramLink) {
+                eventDescription += `\n🔗 ${messageContext.telegramLink}`;
+              }
+
+              // Добавляем информацию о пересланном сообщении если доступна
+              if (messageContext && messageContext.forwardedText) {
+                eventDescription += `\n\nПересланное сообщение:\n${messageContext.forwardedText}`;
+
+                if (messageContext.forwardSource) {
+                  eventDescription += `\n\n📎 Источник: ${messageContext.forwardSource}`;
+                }
+              }
+
+              // Экранируем текст для iCalendar формата (заменяем \n на \\n)
+              const escapedDescription = eventDescription.replace(/\n/g, '\\n');
+
               const icsContent = `BEGIN:VCALENDAR
 VERSION:2.0
 PRODID:-//Yandex Calendar Service//EN
@@ -539,7 +562,7 @@ UID:${eventId}
 DTSTART:${startDateTime}
 DTEND:${endDateTime}
 SUMMARY:${summary}
-${description ? `DESCRIPTION:${description}` : ""}
+DESCRIPTION:${escapedDescription}
 ${location ? `LOCATION:${location}` : ""}
 DTSTAMP:${new Date().toISOString().replace(/[-:]/g, "").split(".")[0]}Z
 END:VEVENT
@@ -558,7 +581,7 @@ END:VCALENDAR`;
                 eventId,
                 event: {
                   summary,
-                  description,
+                  description: eventDescription,
                   startDate,
                   endDate,
                   location,
