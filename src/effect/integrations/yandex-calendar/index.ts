@@ -43,10 +43,30 @@ const GetEventsResultSchema = Schema.Struct({
   totalCount: Schema.optional(Schema.Number)
 })
 
+const CreateEventParamsSchema = Schema.Struct({
+  summary: Schema.String,
+  startDate: Schema.String,
+  endDate: Schema.optional(Schema.String),
+  durationMinutes: Schema.optional(Schema.Number),
+  location: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String)
+})
+
+const CreateEventResultSchema = Schema.Struct({
+  success: Schema.Boolean,
+  eventId: Schema.optional(Schema.String),
+  event: Schema.optional(CalendarEventSchema),
+  message: Schema.optional(Schema.String),
+  error: Schema.optional(Schema.String)
+})
+
 type GetEventsParams = Schema.Schema.Type<typeof GetEventsParamsSchema>
 type GetEventsResult = Schema.Schema.Type<typeof GetEventsResultSchema>
 
 type CalendarEvent = Schema.Schema.Type<typeof CalendarEventSchema>
+
+type CreateEventParams = Schema.Schema.Type<typeof CreateEventParamsSchema>
+type CreateEventResult = Schema.Schema.Type<typeof CreateEventResultSchema>
 
 type YandexToolOptions = {
   credentials: YandexCredentials
@@ -247,13 +267,114 @@ const sortEventsByStartDate = (events: CalendarEvent[]) =>
         new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
     )
 
+const DEFAULT_EVENT_DURATION_MINUTES = 60
+
+const toICalDateTime = (date: Date) =>
+  date.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z"
+
+const escapeICalText = (text: string) =>
+  text
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;")
+
+const createCalendarEvent = async (
+  credentials: YandexCredentials,
+  params: CreateEventParams
+): Promise<CreateEventResult> => {
+  const client = await createDAVClient({
+    serverUrl: credentials.calendarUrl,
+    credentials: {
+      username: credentials.username,
+      password: credentials.password
+    },
+    authMethod: "Basic",
+    defaultAccountType: "caldav"
+  })
+
+  const start = new Date(params.startDate)
+  if (Number.isNaN(start.getTime())) {
+    throw new Error("Invalid startDate provided")
+  }
+
+  let end: Date
+  if (params.endDate) {
+    end = new Date(params.endDate)
+    if (Number.isNaN(end.getTime())) {
+      throw new Error("Invalid endDate provided")
+    }
+  } else {
+    const duration = params.durationMinutes && params.durationMinutes > 0
+      ? params.durationMinutes
+      : DEFAULT_EVENT_DURATION_MINUTES
+    end = new Date(start.getTime() + duration * 60_000)
+  }
+
+  if (start.getTime() >= end.getTime()) {
+    throw new Error("Event end must be after start")
+  }
+
+  const summary = params.summary.trim() || "Встреча"
+  const description = (params.description?.trim() || "🤖 Событие создано с помощью TeleDrug")
+  const eventId = `teledrug-${Date.now()}@yandex.ru`
+
+  const event: CalendarEvent = {
+    id: eventId,
+    summary,
+    description,
+    startDate: start.toISOString(),
+    endDate: end.toISOString(),
+    location: params.location,
+    url: undefined,
+    organizer: undefined,
+    attendees: undefined,
+    status: "confirmed",
+    categories: undefined
+  }
+
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//TeleDrug//Yandex Calendar Integration//RU",
+    "BEGIN:VEVENT",
+    `UID:${eventId}`,
+    `DTSTART:${toICalDateTime(start)}`,
+    `DTEND:${toICalDateTime(end)}`,
+    `SUMMARY:${escapeICalText(summary)}`,
+    `DESCRIPTION:${escapeICalText(description)}`,
+    params.location ? `LOCATION:${escapeICalText(params.location)}` : undefined,
+    `DTSTAMP:${toICalDateTime(new Date())}`,
+    "END:VEVENT",
+    "END:VCALENDAR"
+  ].filter((line): line is string => Boolean(line))
+
+  const iCalString = lines.join("\n")
+
+  await client.createCalendarObject({
+    calendar: {
+      url: credentials.calendarUrl
+    },
+    filename: `${eventId}.ics`,
+    iCalString
+  })
+
+  return {
+    success: true,
+    eventId,
+    event,
+    message: `Событие "${summary}" создано`
+  }
+}
+
 // Создаем tools для AI SDK v5 - zod только для LLM интерфейса
 export const createYandexCalendarTools = ({
   credentials,
   encryptedCredentials
 }: YandexToolOptions) => {
   const formatters: Record<string, ToolResultFormatter> = {
-    getEvents: formatGetEventsResult
+    getEvents: formatGetEventsResult,
+    createEvent: formatCreateEventResult
   }
 
   const tools = {
@@ -344,6 +465,84 @@ export const createYandexCalendarTools = ({
 
         return result
       }
+    }),
+    createEvent: tool({
+      description: "Создание события в Яндекс.Календаре",
+      inputSchema: z.object({
+        summary: z.string().describe("Название события"),
+        startDate: z
+          .string()
+          .describe("Дата и время начала в ISO формате"),
+        endDate: z
+          .string()
+          .optional()
+          .describe("Дата и время окончания в ISO формате"),
+        durationMinutes: z
+          .number()
+          .optional()
+          .describe("Длительность события в минутах (если не указан endDate)"),
+        location: z.string().optional().describe("Место проведения"),
+        description: z.string().optional().describe("Описание события")
+      }),
+      execute: async (input) => {
+        const result = await Effect.runPromise(
+          Effect.gen(function* () {
+            yield* Console.log("🗓️ Creating Yandex Calendar event...")
+
+            if (encryptedCredentials) {
+              yield* Console.log(
+                "🔐 Stored encrypted credentials:",
+                JSON.stringify(encryptedCredentials)
+              )
+            }
+
+            const validCredentials = yield* Schema.decodeUnknown(YandexCredentials)(
+              credentials
+            )
+
+            const params = yield* Schema.decodeUnknown(CreateEventParamsSchema)(
+              input
+            )
+
+            yield* Console.log(
+              "🗒️ Event payload:",
+              JSON.stringify(
+                {
+                  summary: params.summary,
+                  startDate: params.startDate,
+                  endDate: params.endDate,
+                  durationMinutes: params.durationMinutes,
+                  location: params.location
+                },
+                null,
+                2
+              )
+            )
+
+            const creation = yield* Effect.tryPromise({
+              try: async () => createCalendarEvent(validCredentials, params),
+              catch: (cause) =>
+                new Error(
+                  `Failed to create calendar event: ${
+                    cause instanceof Error ? cause.message : String(cause)
+                  }`
+                )
+            })
+
+            return yield* Schema.decodeUnknown(CreateEventResultSchema)(creation)
+          }).pipe(
+            Effect.catchAll((error) =>
+              Effect.succeed({
+                success: false,
+                error: `Ошибка при создании события: ${error}`,
+                message: typeof error === "string" ? error : undefined
+              } satisfies CreateEventResult)
+            )
+          )
+        )
+
+        return result
+      }
     })
   }
 
@@ -379,6 +578,66 @@ const formatGetEventsResult: ToolResultFormatter = (output) =>
     }),
     Effect.catchAll(() =>
       Effect.succeed("❌ Не удалось обработать результат инструмента календаря.")
+    )
+  )
+
+const formatCreateEventResult: ToolResultFormatter = (output) =>
+  Schema.decodeUnknown(CreateEventResultSchema)(output).pipe(
+    Effect.map((result) => {
+      if (!result.success) {
+        return result.error
+          ? `❌ ${result.error}`
+          : "❌ Не удалось создать событие."
+      }
+
+      if (!result.event) {
+        return result.message
+          ? `✅ ${result.message}`
+          : "✅ Событие создано."
+      }
+
+      const start = new Date(result.event.startDate)
+      const end = new Date(result.event.endDate)
+
+      const dateStr = start.toLocaleDateString("ru-RU", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year:
+          start.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined,
+      })
+
+      const timeRange = `${start.toLocaleTimeString("ru-RU", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}–${end.toLocaleTimeString("ru-RU", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}`
+
+      let response = `✅ Событие создано: **${result.event.summary}**\n`
+      response += `📅 ${dateStr}, ${timeRange}\n`
+
+      if (result.event.location) {
+        response += `📍 ${result.event.location}\n`
+      }
+
+      if (result.event.description) {
+        response += `📝 ${result.event.description}\n`
+      }
+
+      if (result.eventId) {
+        response += `🆔 ${result.eventId}\n`
+      }
+
+      if (result.message) {
+        response += `ℹ️ ${result.message}`
+      }
+
+      return response.trim()
+    }),
+    Effect.catchAll(() =>
+      Effect.succeed("❌ Не удалось обработать результат создания события.")
     )
   )
 
