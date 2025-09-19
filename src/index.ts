@@ -1,15 +1,18 @@
 // Compatibility entrypoint that exposes Effect-based bot
 import "./effect/index";
 
-// Optional lightweight healthcheck server for Railway
 const port = Number(process.env.PORT || 3000);
 
-Bun.serve({
+const server = Bun.serve({
   port,
   fetch: (req) => {
     const url = new URL(req.url);
 
-    if (url.pathname === "/" || url.pathname === "/health") {
+    if (url.pathname === "/") {
+      return new Response("TeleDrug bot is running", { status: 200 });
+    }
+
+    if (url.pathname === "/health") {
       return new Response(
         JSON.stringify({ status: "ok", timestamp: new Date().toISOString() }),
         {
@@ -22,3 +25,5 @@ Bun.serve({
     return new Response("Not Found", { status: 404 });
   },
 });
+
+console.log(`🌐 Health server listening on port ${server.port}`);
