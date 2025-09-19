@@ -1,6 +1,6 @@
 {
   "name": "teledrug",
-  "module": "src/effect/index.ts",
+  "module": "src/index.ts",
   "type": "module",
   "private": true,
   "devDependencies": {
@@ -13,9 +13,9 @@
     "typescript": "^5"
   },
   "scripts": {
-    "build": "bun build src/effect/index.ts --outdir dist --target bun",
+    "build": "bun build src/index.ts --outdir dist --target bun",
     "start": "bun run dist/index.js",
-    "dev": "bun run src/effect/index.ts",
+    "dev": "bun run src/index.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"
