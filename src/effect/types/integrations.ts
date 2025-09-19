@@ -1,0 +1,84 @@
+import { Schema } from "@effect/schema";
+import { Data, Effect } from "effect";
+
+// Базовые типы
+export const InteractionType = Schema.Literal(
+  "TEXT",
+  "VOICE",
+  "IMAGE",
+  "FORWARD"
+);
+export type InteractionType = Schema.Schema.Type<typeof InteractionType>;
+
+// Метаданные инструмента
+export const ToolMetadata = Schema.Struct({
+  name: Schema.String,
+  permissions: Schema.Struct({
+    read: Schema.Boolean,
+    write: Schema.Boolean,
+  }),
+  supportedInteractionTypes: Schema.Array(InteractionType),
+  progressMessage: Schema.String,
+  progressEmoji: Schema.String,
+  description: Schema.String,
+});
+export type ToolMetadata = Schema.Schema.Type<typeof ToolMetadata>;
+
+// Конфигурация интеграции
+export const IntegrationConfig = Schema.Struct({
+  name: Schema.String,
+  version: Schema.String,
+  description: Schema.String,
+});
+export type IntegrationConfig = Schema.Schema.Type<typeof IntegrationConfig>;
+
+// Учетные данные (extensible)
+export type IntegrationCredentials = Record<string, unknown>;
+
+// Tool Result
+export const ToolResult = Schema.Struct({
+  success: Schema.Boolean,
+  data: Schema.optional(Schema.Unknown),
+  error: Schema.optional(Schema.String),
+});
+export type ToolResult = Schema.Schema.Type<typeof ToolResult>;
+
+// Progress Step
+export const ProgressStep = Schema.Struct({
+  type: Schema.Literal("tool_call", "progress", "completed"),
+  message: Schema.String,
+  emoji: Schema.String,
+  metadata: Schema.optional(Schema.Unknown),
+});
+export type ProgressStep = Schema.Schema.Type<typeof ProgressStep>;
+
+// Ошибки
+export class IntegrationError extends Data.TaggedError("IntegrationError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+export class ToolError extends Data.TaggedError("ToolError")<{
+  readonly toolName: string;
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+export class MetadataError extends Data.TaggedError("MetadataError")<{
+  readonly toolName: string;
+  readonly message: string;
+}> {}
+
+export class AuthError extends Data.TaggedError("AuthError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+export class FormatError extends Data.TaggedError("FormatError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+export type ToolResultFormatter = (
+  output: unknown
+) => Effect.Effect<string, never>;

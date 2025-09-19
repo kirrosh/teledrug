@@ -1,0 +1,36 @@
+import { Schema } from "@effect/schema"
+import { Data } from "effect"
+
+// Encrypted data schema
+export const EncryptedDataSchema = Schema.Struct({
+  encrypted: Schema.String,
+  iv: Schema.String,
+  tag: Schema.String,
+})
+
+export type EncryptedData = Schema.Schema.Type<typeof EncryptedDataSchema>
+
+// Message schemas
+export const ConversationMessageSchema = Schema.Struct({
+  role: Schema.Literal("user", "assistant"),
+  content: Schema.String,
+  timestamp: Schema.Number,
+})
+
+export type ConversationMessage = Schema.Schema.Type<typeof ConversationMessageSchema>
+
+// Configuration schemas
+export const BotConfigSchema = Schema.Struct({
+  telegramToken: Schema.String,
+})
+
+export type BotConfig = Schema.Schema.Type<typeof BotConfigSchema>
+
+// Chat context for updates
+export const UpdateContextSchema = Schema.Struct({
+  chatId: Schema.Number,
+  userId: Schema.Number,
+  text: Schema.String,
+})
+
+export type UpdateContext = Schema.Schema.Type<typeof UpdateContextSchema>
