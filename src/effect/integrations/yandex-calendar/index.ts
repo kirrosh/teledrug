@@ -1,8 +1,9 @@
-import { Effect, Console, Schema } from "effect"
+import { Effect, Console, Schema, Option } from "effect"
 import { tool } from "ai"
 import { z } from "zod"
 import { createDAVClient } from "tsdav"
 import { ToolResultFormatter } from "../../types/integrations"
+import { ToolProgressReporter } from "../../core/tool-progress"
 
 // Yandex Calendar Credentials Schema - Effect Schema
 export const YandexCredentials = Schema.Struct({
@@ -419,6 +420,19 @@ export const createYandexCalendarTools = ({
               )
             }
 
+            const progressReporterOption = yield* Effect.serviceOption(
+              ToolProgressReporter
+            )
+            if (Option.isSome(progressReporterOption)) {
+              const progressMessage =
+                progressMessages.getEvents ||
+                "Получаю события из Яндекс.Календаря..."
+              yield* progressReporterOption.value.report(
+                "getEvents",
+                progressMessage
+              )
+            }
+
             const validCredentials = yield* Schema.decodeUnknown(YandexCredentials)(
               credentials
             )
@@ -501,6 +515,19 @@ export const createYandexCalendarTools = ({
               yield* Console.log(
                 "🔐 Stored encrypted credentials:",
                 JSON.stringify(encryptedCredentials)
+              )
+            }
+
+            const progressReporterOption = yield* Effect.serviceOption(
+              ToolProgressReporter
+            )
+            if (Option.isSome(progressReporterOption)) {
+              const progressMessage =
+                progressMessages.createEvent ||
+                "Создаю событие в Яндекс.Календаре..."
+              yield* progressReporterOption.value.report(
+                "createEvent",
+                progressMessage
               )
             }
 

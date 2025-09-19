@@ -5,6 +5,7 @@ import { UserConfigStorage } from "./user-config-storage";
 import { AIAgentFactory } from "./ai-agent";
 import { MessageHistory } from "./message-history";
 import { IntegrationRegistry } from "./integration-registry";
+import { ToolProgressReporter } from "../core/tool-progress";
 import type { BotConfig, UpdateContext } from "../types";
 import type { ToolResultFormatter } from "../types/integrations";
 
@@ -201,6 +202,16 @@ const makeTelegramClient = (config: BotConfig) =>
             );
           };
 
+          const toolProgressLayer = Layer.succeed(ToolProgressReporter, {
+            report: (toolName: string, message: string) =>
+              updateProgress(
+                "🛠️",
+                message && message.trim().length > 0
+                  ? message
+                  : `Использую инструмент ${toolName}...`
+              ),
+          });
+
           // Create AI agent processing effect
           const processEffect = Effect.gen(function* () {
             // Get or create AI agent for user
@@ -226,10 +237,8 @@ const makeTelegramClient = (config: BotConfig) =>
 
             if (result.toolCalls && result.toolCalls.length > 0) {
               for (const call of result.toolCalls) {
-                const progressMessageText =
-                  toolProgressMessages[call.toolName] ||
-                  `Использую инструмент ${call.toolName}...`;
-                yield* updateProgress("🛠️", progressMessageText);
+                const completionMessage = `Инструмент ${call.toolName} выполнен`;
+                yield* updateProgress("✅", completionMessage);
               }
             }
 
@@ -282,7 +291,10 @@ const makeTelegramClient = (config: BotConfig) =>
           await Effect.runPromise(
             processEffect.pipe(
               Effect.provide(
-                Layer.succeed(IntegrationRegistry, integrationRegistry)
+                Layer.mergeAll(
+                  Layer.succeed(IntegrationRegistry, integrationRegistry),
+                  toolProgressLayer
+                )
               )
             )
           );
