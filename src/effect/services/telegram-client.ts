@@ -18,24 +18,45 @@ const generateResponseFromToolResults = (toolResults: any[]): string => {
   for (const toolResult of toolResults) {
     if (toolResult.toolName === "getEvents") {
       const output = toolResult.output
-      if (output?.success && output?.events) {
+      if (output?.success && Array.isArray(output?.events)) {
         if (output.events.length === 0) {
           response += "📅 У вас нет событий на этот период.\n"
         } else {
-          response += `📅 **События на неделе:**\n\n`
+          response += `📅 **События календаря:**\n\n`
           output.events.forEach((event: any, index: number) => {
-            const date = new Date(event.date).toLocaleDateString('ru-RU', {
-              weekday: 'long',
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit'
-            })
-            response += `${index + 1}. **${event.title}**\n`
-            response += `   📍 ${date}\n`
+            const start = event.startDate ? new Date(event.startDate) : null
+            const end = event.endDate ? new Date(event.endDate) : null
+
+            const formattedDate = start
+              ? start.toLocaleDateString('ru-RU', {
+                  weekday: 'long',
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })
+              : 'Неизвестная дата'
+
+            const duration = start && end
+              ? Math.round((end.getTime() - start.getTime()) / (1000 * 60))
+              : null
+
+            response += `${index + 1}. **${event.summary || event.title || 'Событие'}**\n`
+            response += `   📅 ${formattedDate}`
+            if (duration && duration > 0) {
+              response += ` • ${duration >= 60 ? `${Math.floor(duration / 60)}ч ${duration % 60}мин` : `${duration}мин`}`
+            }
+            response += "\n"
+
+            if (event.location) {
+              response += `   📍 ${event.location}\n`
+            }
             if (event.description) {
               response += `   📝 ${event.description}\n`
+            }
+            if (event.organizer) {
+              response += `   👤 ${event.organizer}\n`
             }
             response += "\n"
           })

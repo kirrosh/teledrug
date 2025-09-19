@@ -18,7 +18,6 @@ export const createMainLayer = (
   const cryptography = CryptographyServiceLive;
   const encryption = EncryptionServiceLive;
   const messageHistory = MessageHistoryLive;
-  const integrationRegistry = IntegrationRegistryLive;
 
   // Level 1: UserRepository требует EncryptionService
   const userRepository = pipe(
@@ -30,6 +29,12 @@ export const createMainLayer = (
   const userConfig = pipe(
     UserConfigStorageLive,
     Layer.provide(userRepository)  // ✅ Явно предоставляем зависимость
+  );
+
+  // Level 2: IntegrationRegistry требует UserRepository
+  const integrationRegistry = pipe(
+    IntegrationRegistryLive,
+    Layer.provide(userRepository) // ✅ Предоставляем доступ к данным пользователя
   );
 
   // Level 1: AIAgent требует IntegrationRegistry

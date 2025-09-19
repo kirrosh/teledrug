@@ -2,53 +2,134 @@ import { Effect, Context, Layer, Console } from "effect"
 import { Tool as AITool } from "ai"
 import {
   InteractionType,
-  ToolError,
   IntegrationError
 } from "../types/integrations"
-import { YandexCalendarIntegration } from "../integrations/yandex-calendar"
+import {
+  YandexCalendarIntegration,
+  YandexCredentials
+} from "../integrations/yandex-calendar"
+import { UserRepository } from "./user-repository"
 
-// Simple registry interface для AI SDK v5
+// Integration registry interface для AI SDK v5
 export interface IntegrationRegistry {
-  readonly getAllTools: (interactionType: InteractionType) => Effect.Effect<Record<string, AITool>, ToolError>
+  readonly getToolsForUser: (
+    userId: string | number,
+    interactionType: InteractionType
+  ) => Effect.Effect<Record<string, AITool>, IntegrationError>
 }
 
-export const IntegrationRegistry = Context.GenericTag<IntegrationRegistry>("@services/IntegrationRegistry")
+export const IntegrationRegistry = Context.GenericTag<IntegrationRegistry>(
+  "@services/IntegrationRegistry"
+)
+
+const toNumericUserId = (userId: string | number) => {
+  if (typeof userId === "number") {
+    return userId
+  }
+
+  const parsed = Number.parseInt(userId, 10)
+  if (Number.isNaN(parsed)) {
+    throw new IntegrationError({
+      message: `Invalid user id received from context: ${userId}`
+    })
+  }
+
+  return parsed
+}
 
 // Реализация registry с реальными интеграциями
 const makeIntegrationRegistry = Effect.gen(function* () {
+  const userRepository = yield* UserRepository
+
   yield* Console.log("🔧 Initializing Integration Registry...")
 
-  // Моковые credentials для Yandex Calendar (в реальности будут браться из БД пользователя)
-  const mockYandexCredentials = {
-    calendarUrl: "https://caldav.yandex.ru/calendars/user@yandex.ru/events/",
-    username: "user@yandex.ru",
-    password: "mock_password"
-  }
-
-  // Создаем tools для Yandex Calendar интеграции
-  const yandexTools = YandexCalendarIntegration.createTools(mockYandexCredentials)
-
-  yield* Console.log(`✅ Created tools for ${YandexCalendarIntegration.name} integration`)
-
-  // Функция получения всех tools
-  const getAllTools = (interactionType: InteractionType) =>
+  const getToolsForUser = (
+    userId: string | number,
+    interactionType: InteractionType
+  ) =>
     Effect.gen(function* () {
-      yield* Console.log(`🔧 Registry: Getting tools for interaction type: ${interactionType}`)
+      const numericUserId = yield* Effect.try({
+        try: () => toNumericUserId(userId),
+        catch: (cause) =>
+          new IntegrationError({
+            message: "Failed to normalise user identifier",
+            cause
+          })
+      })
 
-      const allTools: Record<string, AITool> = {}
+      yield* Console.log(
+        `🔧 Registry: loading tools for user ${numericUserId} (${interactionType})`
+      )
 
-      // Для TEXT и VOICE добавляем tools от Yandex Calendar
-      if (interactionType === "TEXT" || interactionType === "VOICE") {
-        // Добавляем все tools из Yandex Calendar интеграции
-        Object.assign(allTools, yandexTools)
+      const integrations = yield* userRepository
+        .getAllDecryptedIntegrations(numericUserId)
+        .pipe(
+          Effect.mapError((cause) =>
+            new IntegrationError({
+              message: "Failed to fetch user integrations",
+              cause
+            })
+          )
+        )
+
+      if (integrations.length === 0) {
+        yield* Console.log(
+          `📭 Registry: user ${numericUserId} has no integrations configured`
+        )
+        return {} satisfies Record<string, AITool>
       }
 
-      yield* Console.log(`✅ Registry: Found ${Object.keys(allTools).length} tools total`)
-      return allTools
+      const tools: Record<string, AITool> = {}
+
+      for (const { integration, credentials } of integrations) {
+        if (!integration.enabled) {
+          yield* Console.log(
+            `⏭️ Registry: integration ${integration.integrationType} disabled for user ${numericUserId}`
+          )
+          continue
+        }
+
+        switch (integration.integrationType) {
+          case "YandexCalendar": {
+            if (interactionType !== "TEXT" && interactionType !== "VOICE") {
+              yield* Console.log(
+                `⚖️ Registry: skipping YandexCalendar tools for unsupported interaction type ${interactionType}`
+              )
+              break
+            }
+
+            const yandexTools = YandexCalendarIntegration.createTools({
+              credentials: credentials as YandexCredentials,
+              encryptedCredentials: {
+                encrypted: integration.credentialsEncrypted,
+                iv: integration.credentialsIv,
+                tag: integration.credentialsTag
+              }
+            })
+
+            Object.assign(tools, yandexTools)
+            yield* Console.log(
+              `✅ Registry: added ${Object.keys(yandexTools).length} YandexCalendar tool(s)`
+            )
+            break
+          }
+          default: {
+            yield* Console.log(
+              `ℹ️ Registry: no Effect implementation for integration ${integration.integrationType}`
+            )
+          }
+        }
+      }
+
+      yield* Console.log(
+        `✅ Registry: prepared ${Object.keys(tools).length} tool(s) for user ${numericUserId}`
+      )
+
+      return tools
     })
 
   return {
-    getAllTools
+    getToolsForUser
   } satisfies IntegrationRegistry
 })
 

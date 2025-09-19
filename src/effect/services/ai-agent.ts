@@ -11,7 +11,7 @@ import { generateText, type GenerateTextResult } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { AIAgentError } from "../errors";
 import { IntegrationRegistry } from "./integration-registry";
-import { ToolError } from "../types/integrations";
+import { IntegrationError } from "../types/integrations";
 
 // AI Agent Configuration Schema
 const AIAgentConfigSchema = Schema.Struct({
@@ -125,13 +125,16 @@ const makeAIAgent = (config: AIAgentConfig) =>
           // Get tools from integration registry
           const integrationRegistry = yield* IntegrationRegistry;
           const tools = yield* integrationRegistry
-            .getAllTools(validatedContext.interactionType || "TEXT")
+            .getToolsForUser(
+              validatedContext.userId,
+              validatedContext.interactionType || "TEXT"
+            )
             .pipe(
               Effect.mapError(
-                (toolError) =>
+                (registryError: IntegrationError) =>
                   new AIAgentError({
-                    message: `Failed to load tools: ${toolError.message}`,
-                    cause: toolError,
+                    message: `Failed to prepare integrations for user ${validatedContext.userId}`,
+                    cause: registryError,
                   })
               )
             );
