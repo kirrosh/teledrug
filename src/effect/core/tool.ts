@@ -31,13 +31,9 @@ export interface ToolService<TParams = unknown, TResult = unknown> {
 }
 
 // Generic Tool Context Tag
-export interface Tool<TParams = unknown, TResult = unknown> {
-  readonly _tag: unique symbol
-}
-
 export const Tool = <TParams = unknown, TResult = unknown>(
   tag: string
-): Context.Tag<Tool<TParams, TResult>, ToolService<TParams, TResult>> =>
+): Context.Tag<ToolService<TParams, TResult>, ToolService<TParams, TResult>> =>
   Context.GenericTag<ToolService<TParams, TResult>>(`@tools/${tag}`)
 
 // AuthContext interface for tools
@@ -72,9 +68,9 @@ export const makeTool = <TParams, TResult>(
         tool({
           description: config.description,
           parameters: config.parameters,
-          execute: async (params) => {
+          execute: async (params: TParams) => {
             const result = await Effect.runPromise(
-              executeWithAuth(params as TParams)
+              executeWithAuth(params)
             )
             return format(result)
           }

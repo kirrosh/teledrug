@@ -2,7 +2,8 @@ import { Effect, Context, Layer, Console } from "effect"
 import { Tool as AITool } from "ai"
 import {
   InteractionType,
-  IntegrationError
+  IntegrationError,
+  ToolResultFormatter
 } from "../types/integrations"
 import {
   YandexCalendarIntegration,
@@ -11,11 +12,16 @@ import {
 import { UserRepository } from "./user-repository"
 
 // Integration registry interface для AI SDK v5
+export interface IntegrationToolsBundle {
+  readonly tools: Record<string, AITool>
+  readonly formatters: Record<string, ToolResultFormatter>
+}
+
 export interface IntegrationRegistry {
   readonly getToolsForUser: (
     userId: string | number,
     interactionType: InteractionType
-  ) => Effect.Effect<Record<string, AITool>, IntegrationError>
+  ) => Effect.Effect<IntegrationToolsBundle, IntegrationError>
 }
 
 export const IntegrationRegistry = Context.GenericTag<IntegrationRegistry>(
@@ -76,10 +82,14 @@ const makeIntegrationRegistry = Effect.gen(function* () {
         yield* Console.log(
           `📭 Registry: user ${numericUserId} has no integrations configured`
         )
-        return {} satisfies Record<string, AITool>
+        return {
+          tools: {},
+          formatters: {}
+        } satisfies IntegrationToolsBundle
       }
 
       const tools: Record<string, AITool> = {}
+      const formatters: Record<string, ToolResultFormatter> = {}
 
       for (const { integration, credentials } of integrations) {
         if (!integration.enabled) {
@@ -107,9 +117,10 @@ const makeIntegrationRegistry = Effect.gen(function* () {
               }
             })
 
-            Object.assign(tools, yandexTools)
+            Object.assign(tools, yandexTools.tools)
+            Object.assign(formatters, yandexTools.formatters)
             yield* Console.log(
-              `✅ Registry: added ${Object.keys(yandexTools).length} YandexCalendar tool(s)`
+              `✅ Registry: added ${Object.keys(yandexTools.tools).length} YandexCalendar tool(s)`
             )
             break
           }
@@ -125,7 +136,10 @@ const makeIntegrationRegistry = Effect.gen(function* () {
         `✅ Registry: prepared ${Object.keys(tools).length} tool(s) for user ${numericUserId}`
       )
 
-      return tools
+      return {
+        tools,
+        formatters
+      }
     })
 
   return {

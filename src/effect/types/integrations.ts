@@ -1,5 +1,5 @@
 import { Schema } from "@effect/schema";
-import { Data } from "effect";
+import { Data, Effect } from "effect";
 
 // Базовые типы
 export const InteractionType = Schema.Literal(
@@ -78,3 +78,7 @@ export class FormatError extends Data.TaggedError("FormatError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
+
+export type ToolResultFormatter = (
+  output: unknown
+) => Effect.Effect<string, never>;

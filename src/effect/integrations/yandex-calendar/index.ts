@@ -2,6 +2,7 @@ import { Effect, Console, Schema } from "effect"
 import { tool } from "ai"
 import { z } from "zod"
 import { createDAVClient } from "tsdav"
+import { ToolResultFormatter } from "../../types/integrations"
 
 // Yandex Calendar Credentials Schema - Effect Schema
 export const YandexCredentials = Schema.Struct({
@@ -250,96 +251,189 @@ const sortEventsByStartDate = (events: CalendarEvent[]) =>
 export const createYandexCalendarTools = ({
   credentials,
   encryptedCredentials
-}: YandexToolOptions) => ({
-  getEvents: tool({
-    description: "Получение событий из Яндекс.Календаря",
-    inputSchema: z.object({
-      dateRange: z
-        .object({
-          start: z
-            .string()
-            .optional()
-            .describe("Начальная дата в формате ISO (YYYY-MM-DD)"),
-          end: z
-            .string()
-            .optional()
-            .describe("Конечная дата в формате ISO (YYYY-MM-DD)")
-        })
-        .optional()
-        .describe("Диапазон дат для поиска событий"),
-      limit: z
-        .number()
-        .optional()
-        .describe("Максимальное количество событий в выдаче")
-    }),
-    execute: async ({ dateRange, limit }) => {
-      const result = await Effect.runPromise(
-        Effect.gen(function* () {
-          yield* Console.log("🗓️ Executing Yandex Calendar getEvents tool...")
+}: YandexToolOptions) => {
+  const formatters: Record<string, ToolResultFormatter> = {
+    getEvents: formatGetEventsResult
+  }
 
-          if (encryptedCredentials) {
-            yield* Console.log(
-              "🔐 Stored encrypted credentials:",
-              JSON.stringify(encryptedCredentials)
-            )
-          }
-
-          const validCredentials = yield* Schema.decodeUnknown(YandexCredentials)(
-            credentials
-          )
-
-          const params = yield* Schema.decodeUnknown(GetEventsParamsSchema)({
-            dateRange,
-            limit
+  const tools = {
+    getEvents: tool({
+      description: "Получение событий из Яндекс.Календаря",
+      inputSchema: z.object({
+        dateRange: z
+          .object({
+            start: z
+              .string()
+              .optional()
+              .describe("Начальная дата в формате ISO (YYYY-MM-DD)"),
+            end: z
+              .string()
+              .optional()
+              .describe("Конечная дата в формате ISO (YYYY-MM-DD)")
           })
+          .optional()
+          .describe("Диапазон дат для поиска событий"),
+        limit: z
+          .number()
+          .optional()
+          .describe("Максимальное количество событий в выдаче")
+      }),
+      execute: async ({ dateRange, limit }) => {
+        const result = await Effect.runPromise(
+          Effect.gen(function* () {
+            yield* Console.log("🗓️ Executing Yandex Calendar getEvents tool...")
 
-          yield* Console.log(
-            "📅 Request parameters:",
-            JSON.stringify(params, null, 2)
-          )
-
-          const events = yield* Effect.tryPromise({
-            try: async () => fetchCalendarEvents(validCredentials),
-            catch: (cause) =>
-              new Error(
-                `Failed to fetch calendar events: ${
-                  cause instanceof Error ? cause.message : String(cause)
-                }`
+            if (encryptedCredentials) {
+              yield* Console.log(
+                "🔐 Stored encrypted credentials:",
+                JSON.stringify(encryptedCredentials)
               )
-          })
+            }
 
-          const filtered = applyLimit(
-            sortEventsByStartDate(filterEventsByDateRange(events, params)),
-            params.limit
-          )
+            const validCredentials = yield* Schema.decodeUnknown(YandexCredentials)(
+              credentials
+            )
 
-          const response: GetEventsResult = {
-            success: true,
-            events: filtered,
-            totalCount: filtered.length,
-            message:
-              filtered.length > 0
-                ? `Найдено ${filtered.length} событий для ${validCredentials.username}`
-                : "События не найдены"
-          }
+            const params = yield* Schema.decodeUnknown(GetEventsParamsSchema)({
+              dateRange,
+              limit
+            })
 
-          return yield* Schema.decodeUnknown(GetEventsResultSchema)(response)
-        }).pipe(
-          Effect.catchAll((error) =>
-            Effect.succeed({
-              success: false,
-              events: [],
-              message: `Ошибка при обращении к Яндекс.Календарю: ${error}`,
-              totalCount: 0
-            } satisfies GetEventsResult)
+            yield* Console.log(
+              "📅 Request parameters:",
+              JSON.stringify(params, null, 2)
+            )
+
+            const events = yield* Effect.tryPromise({
+              try: async () => fetchCalendarEvents(validCredentials),
+              catch: (cause) =>
+                new Error(
+                  `Failed to fetch calendar events: ${
+                    cause instanceof Error ? cause.message : String(cause)
+                  }`
+                )
+            })
+
+            const filtered = applyLimit(
+              sortEventsByStartDate(filterEventsByDateRange(events, params)),
+              params.limit
+            )
+
+            const response: GetEventsResult = {
+              success: true,
+              events: filtered,
+              totalCount: filtered.length,
+              message:
+                filtered.length > 0
+                  ? `Найдено ${filtered.length} событий для ${validCredentials.username}`
+                  : "События не найдены"
+            }
+
+            return yield* Schema.decodeUnknown(GetEventsResultSchema)(response)
+          }).pipe(
+            Effect.catchAll((error) =>
+              Effect.succeed({
+                success: false,
+                events: [],
+                message: `Ошибка при обращении к Яндекс.Календарю: ${error}`,
+                totalCount: 0
+              } satisfies GetEventsResult)
+            )
           )
         )
-      )
 
-      return result
-    }
+        return result
+      }
+    })
+  }
+
+  return { tools, formatters }
+}
+
+const formatGetEventsResult: ToolResultFormatter = (output) =>
+  Schema.decodeUnknown(GetEventsResultSchema)(output).pipe(
+    Effect.map((result) => {
+      if (!result.success) {
+        return result.message ? `❌ ${result.message}` : "❌ Не удалось получить события календаря."
+      }
+
+      if (!result.events || result.events.length === 0) {
+        return "📅 У вас нет событий на выбранный период."
+      }
+
+      const formattedEvents = result.events
+        .map((event, index) => formatEventCard(event, index + 1))
+        .join("\n\n")
+
+      let response = `📅 **События календаря:**\n\n${formattedEvents}`
+
+      if (typeof result.totalCount === "number") {
+        response += `\n\n📊 Всего событий: ${result.totalCount}`
+      }
+
+      if (result.message) {
+        response += `\nℹ️ ${result.message}`
+      }
+
+      return response
+    }),
+    Effect.catchAll(() =>
+      Effect.succeed("❌ Не удалось обработать результат инструмента календаря.")
+    )
+  )
+
+const formatEventCard = (event: CalendarEvent, index: number) => {
+  const start = new Date(event.startDate)
+  const end = new Date(event.endDate)
+
+  const formattedDate = start.toLocaleDateString("ru-RU", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
   })
-})
+
+  const durationMinutes = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000))
+  const durationText = durationMinutes
+    ? durationMinutes >= 60
+      ? `${Math.floor(durationMinutes / 60)}ч ${durationMinutes % 60}мин`
+      : `${durationMinutes}мин`
+    : undefined
+
+  let card = `${index}. **${event.summary || "Событие"}**\n`
+  card += `   📅 ${formattedDate}`
+  if (durationText) {
+    card += ` • ${durationText}`
+  }
+  card += "\n"
+
+  if (event.location) {
+    card += `   📍 ${event.location}\n`
+  }
+
+  if (event.description) {
+    card += `   📝 ${event.description}\n`
+  }
+
+  if (event.organizer) {
+    card += `   👤 ${event.organizer}\n`
+  }
+
+  if (event.attendees && event.attendees.length > 0) {
+    const attendeesPreview = event.attendees.slice(0, 3).join(", ")
+    const moreCount = event.attendees.length - 3
+    card += `   👥 ${attendeesPreview}${moreCount > 0 ? ` и ещё ${moreCount}` : ""}\n`
+  }
+
+  if (event.categories && event.categories.length > 0) {
+    const tags = event.categories.map((category) => `#${category.replace(/\s+/g, "_")}`).join(" ")
+    card += `   🏷 ${tags}\n`
+  }
+
+  return card.trimEnd()
+}
 
 export const YandexCalendarIntegration = {
   name: "YandexCalendar",

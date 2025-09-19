@@ -6,72 +6,37 @@ import { AIAgentFactory } from "./ai-agent"
 import { MessageHistory } from "./message-history"
 import { IntegrationRegistry } from "./integration-registry"
 import type { BotConfig, UpdateContext } from "../types"
+import type { ToolResultFormatter } from "../types/integrations"
 
 // Helper function to generate response from tool results
-const generateResponseFromToolResults = (toolResults: any[]): string => {
-  if (!toolResults || toolResults.length === 0) {
-    return "❌ Извините, не удалось получить результаты."
-  }
+const generateResponseFromToolResults = (
+  toolResults: any[],
+  formatters: Record<string, ToolResultFormatter>
+) =>
+  Effect.gen(function* () {
+    if (!toolResults || toolResults.length === 0) {
+      return "❌ Извините, не удалось получить результаты."
+    }
 
-  let response = ""
+    const responses: string[] = []
 
-  for (const toolResult of toolResults) {
-    if (toolResult.toolName === "getEvents") {
-      const output = toolResult.output
-      if (output?.success && Array.isArray(output?.events)) {
-        if (output.events.length === 0) {
-          response += "📅 У вас нет событий на этот период.\n"
-        } else {
-          response += `📅 **События календаря:**\n\n`
-          output.events.forEach((event: any, index: number) => {
-            const start = event.startDate ? new Date(event.startDate) : null
-            const end = event.endDate ? new Date(event.endDate) : null
+    for (const toolResult of toolResults) {
+      const formatter = formatters[toolResult.toolName]
 
-            const formattedDate = start
-              ? start.toLocaleDateString('ru-RU', {
-                  weekday: 'long',
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })
-              : 'Неизвестная дата'
-
-            const duration = start && end
-              ? Math.round((end.getTime() - start.getTime()) / (1000 * 60))
-              : null
-
-            response += `${index + 1}. **${event.summary || event.title || 'Событие'}**\n`
-            response += `   📅 ${formattedDate}`
-            if (duration && duration > 0) {
-              response += ` • ${duration >= 60 ? `${Math.floor(duration / 60)}ч ${duration % 60}мин` : `${duration}мин`}`
-            }
-            response += "\n"
-
-            if (event.location) {
-              response += `   📍 ${event.location}\n`
-            }
-            if (event.description) {
-              response += `   📝 ${event.description}\n`
-            }
-            if (event.organizer) {
-              response += `   👤 ${event.organizer}\n`
-            }
-            response += "\n"
-          })
-          if (output.message) {
-            response += `ℹ️ ${output.message}`
-          }
-        }
+      if (formatter) {
+        const formatted = yield* formatter(toolResult.output)
+        responses.push(formatted)
+      } else if (toolResult.output && typeof toolResult.output === "object") {
+        responses.push(
+          `🛠️ ${toolResult.toolName}: ${JSON.stringify(toolResult.output, null, 2)}`
+        )
       } else {
-        response += "❌ Ошибка при получении событий календаря.\n"
+        responses.push(`🛠️ ${toolResult.toolName}: ${String(toolResult.output)}`)
       }
     }
-  }
 
-  return response.trim() || "❌ Извините, не удалось обработать результаты."
-}
+    return responses.join("\n\n").trim() || "❌ Извините, не удалось обработать результаты."
+  })
 
 // Service interface
 export interface TelegramClient {
@@ -172,7 +137,9 @@ const makeTelegramClient = (config: BotConfig) => Effect.gen(function* () {
             yield* messageHistory.addUserMessage(chatId, text)
 
             // Process message through AI
-            const result = yield* aiAgent.processText(userId, text, history)
+            const agentResponse = yield* aiAgent.processText(userId, text, history)
+
+            const { result, toolFormatters } = agentResponse
 
             console.log("🔍 AI Agent result:", JSON.stringify(result, null, 2))
 
@@ -182,7 +149,10 @@ const makeTelegramClient = (config: BotConfig) => Effect.gen(function* () {
             // If no direct text but we have tool results, generate response from them
             if (!responseText && result.toolResults && result.toolResults.length > 0) {
               console.log("🔧 Processing tool results to generate response...")
-              responseText = generateResponseFromToolResults(result.toolResults)
+              responseText = yield* generateResponseFromToolResults(
+                result.toolResults,
+                toolFormatters
+              )
             }
 
             // Final fallback

@@ -11,7 +11,7 @@ import { generateText, type GenerateTextResult } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { AIAgentError } from "../errors";
 import { IntegrationRegistry } from "./integration-registry";
-import { IntegrationError } from "../types/integrations";
+import { IntegrationError, ToolResultFormatter } from "../types/integrations";
 
 // AI Agent Configuration Schema
 const AIAgentConfigSchema = Schema.Struct({
@@ -42,7 +42,7 @@ export interface AIAgent {
     context: SimpleChatContext,
     conversationHistory?: readonly string[]
   ) => Effect.Effect<
-    GenerateTextResult<any, any>,
+    AIAgentResponse,
     AIAgentError,
     IntegrationRegistry
   >;
@@ -52,10 +52,15 @@ export interface AIAgent {
     text: string,
     conversationHistory?: readonly string[]
   ) => Effect.Effect<
-    GenerateTextResult<any, any>,
+    AIAgentResponse,
     AIAgentError,
     IntegrationRegistry
   >;
+}
+
+export interface AIAgentResponse {
+  readonly result: GenerateTextResult<any, any>;
+  readonly toolFormatters: Record<string, ToolResultFormatter>;
 }
 
 // Service tag
@@ -124,7 +129,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
 
           // Get tools from integration registry
           const integrationRegistry = yield* IntegrationRegistry;
-          const tools = yield* integrationRegistry
+          const userTools = yield* integrationRegistry
             .getToolsForUser(
               validatedContext.userId,
               validatedContext.interactionType || "TEXT"
@@ -141,7 +146,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
 
           yield* Console.log(
             `🔧 Found ${
-              Object.keys(tools).length
+              Object.keys(userTools.tools).length
             } tools for interaction type: ${
               validatedContext.interactionType || "TEXT"
             }`
@@ -152,7 +157,10 @@ const makeAIAgent = (config: AIAgentConfig) =>
             generateText({
               model,
               messages,
-              tools: Object.keys(tools).length > 0 ? tools : undefined,
+              tools:
+                Object.keys(userTools.tools).length > 0
+                  ? userTools.tools
+                  : undefined,
             })
           );
 
@@ -175,7 +183,10 @@ const makeAIAgent = (config: AIAgentConfig) =>
 
           console.log(`✅ AI response: ${result.text.substring(0, 100)}...`);
 
-          return result;
+          return {
+            result,
+            toolFormatters: userTools.formatters,
+          } satisfies AIAgentResponse;
         } catch (cause) {
           return yield* Effect.fail(
             new AIAgentError({
