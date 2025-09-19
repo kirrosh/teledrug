@@ -15,6 +15,7 @@ import { UserRepository } from "./user-repository"
 export interface IntegrationToolsBundle {
   readonly tools: Record<string, AITool>
   readonly formatters: Record<string, ToolResultFormatter>
+  readonly progressMessages: Record<string, string>
 }
 
 export interface IntegrationRegistry {
@@ -84,12 +85,14 @@ const makeIntegrationRegistry = Effect.gen(function* () {
         )
         return {
           tools: {},
-          formatters: {}
+          formatters: {},
+          progressMessages: {}
         } satisfies IntegrationToolsBundle
       }
 
       const tools: Record<string, AITool> = {}
       const formatters: Record<string, ToolResultFormatter> = {}
+      const progressMessages: Record<string, string> = {}
 
       for (const { integration, credentials } of integrations) {
         if (!integration.enabled) {
@@ -119,6 +122,9 @@ const makeIntegrationRegistry = Effect.gen(function* () {
 
             Object.assign(tools, yandexTools.tools)
             Object.assign(formatters, yandexTools.formatters)
+            if (yandexTools.progressMessages) {
+              Object.assign(progressMessages, yandexTools.progressMessages)
+            }
             yield* Console.log(
               `✅ Registry: added ${Object.keys(yandexTools.tools).length} YandexCalendar tool(s)`
             )
@@ -138,7 +144,8 @@ const makeIntegrationRegistry = Effect.gen(function* () {
 
       return {
         tools,
-        formatters
+        formatters,
+        progressMessages
       }
     })
 

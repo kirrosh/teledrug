@@ -61,6 +61,7 @@ export interface AIAgent {
 export interface AIAgentResponse {
   readonly result: GenerateTextResult<any, any>;
   readonly toolFormatters: Record<string, ToolResultFormatter>;
+  readonly toolProgressMessages: Record<string, string>;
 }
 
 // Service tag
@@ -186,6 +187,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
           return {
             result,
             toolFormatters: userTools.formatters,
+            toolProgressMessages: userTools.progressMessages,
           } satisfies AIAgentResponse;
         } catch (cause) {
           return yield* Effect.fail(

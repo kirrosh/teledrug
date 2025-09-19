@@ -279,6 +279,9 @@ const escapeICalText = (text: string) =>
     .replace(/,/g, "\\,")
     .replace(/;/g, "\\;")
 
+const escapeMarkdown = (text: string) =>
+  text.replace(/([_`*\[\]()~>#+\-=|{}.!\\])/g, "\\$1")
+
 const createCalendarEvent = async (
   credentials: YandexCredentials,
   params: CreateEventParams
@@ -375,6 +378,11 @@ export const createYandexCalendarTools = ({
   const formatters: Record<string, ToolResultFormatter> = {
     getEvents: formatGetEventsResult,
     createEvent: formatCreateEventResult
+  }
+
+  const progressMessages: Record<string, string> = {
+    getEvents: "Получаю события из Яндекс.Календаря...",
+    createEvent: "Создаю событие в Яндекс.Календаре..."
   }
 
   const tools = {
@@ -546,14 +554,16 @@ export const createYandexCalendarTools = ({
     })
   }
 
-  return { tools, formatters }
+  return { tools, formatters, progressMessages }
 }
 
 const formatGetEventsResult: ToolResultFormatter = (output) =>
   Schema.decodeUnknown(GetEventsResultSchema)(output).pipe(
     Effect.map((result) => {
       if (!result.success) {
-        return result.message ? `❌ ${result.message}` : "❌ Не удалось получить события календаря."
+        return result.message
+          ? `❌ ${escapeMarkdown(result.message)}`
+          : "❌ Не удалось получить события календаря."
       }
 
       if (!result.events || result.events.length === 0) {
@@ -567,11 +577,11 @@ const formatGetEventsResult: ToolResultFormatter = (output) =>
       let response = `📅 **События календаря:**\n\n${formattedEvents}`
 
       if (typeof result.totalCount === "number") {
-        response += `\n\n📊 Всего событий: ${result.totalCount}`
+        response += `\n\n📊 Всего событий: ${escapeMarkdown(result.totalCount.toString())}`
       }
 
       if (result.message) {
-        response += `\nℹ️ ${result.message}`
+        response += `\nℹ️ ${escapeMarkdown(result.message)}`
       }
 
       return response
@@ -586,13 +596,13 @@ const formatCreateEventResult: ToolResultFormatter = (output) =>
     Effect.map((result) => {
       if (!result.success) {
         return result.error
-          ? `❌ ${result.error}`
+          ? `❌ ${escapeMarkdown(result.error)}`
           : "❌ Не удалось создать событие."
       }
 
       if (!result.event) {
         return result.message
-          ? `✅ ${result.message}`
+          ? `✅ ${escapeMarkdown(result.message)}`
           : "✅ Событие создано."
       }
 
@@ -615,23 +625,35 @@ const formatCreateEventResult: ToolResultFormatter = (output) =>
         minute: "2-digit",
       })}`
 
-      let response = `✅ Событие создано: **${result.event.summary}**\n`
-      response += `📅 ${dateStr}, ${timeRange}\n`
+      const summary = escapeMarkdown(result.event.summary)
+      const location = result.event.location
+        ? escapeMarkdown(result.event.location)
+        : undefined
+      const description = result.event.description
+        ? escapeMarkdown(result.event.description)
+        : undefined
+      const eventId = result.eventId ? escapeMarkdown(result.eventId) : undefined
+      const message = result.message ? escapeMarkdown(result.message) : undefined
+      const safeDateStr = escapeMarkdown(dateStr)
+      const safeTimeRange = escapeMarkdown(timeRange)
 
-      if (result.event.location) {
-        response += `📍 ${result.event.location}\n`
+      let response = `✅ Событие создано: **${summary}**\n`
+      response += `📅 ${safeDateStr}, ${safeTimeRange}\n`
+
+      if (location) {
+        response += `📍 ${location}\n`
       }
 
-      if (result.event.description) {
-        response += `📝 ${result.event.description}\n`
+      if (description) {
+        response += `📝 ${description}\n`
       }
 
-      if (result.eventId) {
-        response += `🆔 ${result.eventId}\n`
+      if (eventId) {
+        response += `🆔 ${eventId}\n`
       }
 
-      if (result.message) {
-        response += `ℹ️ ${result.message}`
+      if (message) {
+        response += `ℹ️ ${message}`
       }
 
       return response.trim()
@@ -661,34 +683,42 @@ const formatEventCard = (event: CalendarEvent, index: number) => {
       : `${durationMinutes}мин`
     : undefined
 
-  let card = `${index}. **${event.summary || "Событие"}**\n`
-  card += `   📅 ${formattedDate}`
+  const summary = escapeMarkdown(event.summary || "Событие")
+  const safeDate = escapeMarkdown(formattedDate)
+
+  let card = `${index}. **${summary}**\n`
+  card += `   📅 ${safeDate}`
   if (durationText) {
-    card += ` • ${durationText}`
+    card += ` • ${escapeMarkdown(durationText)}`
   }
   card += "\n"
 
   if (event.location) {
-    card += `   📍 ${event.location}\n`
+    card += `   📍 ${escapeMarkdown(event.location)}\n`
   }
 
   if (event.description) {
-    card += `   📝 ${event.description}\n`
+    card += `   📝 ${escapeMarkdown(event.description)}\n`
   }
 
   if (event.organizer) {
-    card += `   👤 ${event.organizer}\n`
+    card += `   👤 ${escapeMarkdown(event.organizer)}\n`
   }
 
   if (event.attendees && event.attendees.length > 0) {
     const attendeesPreview = event.attendees.slice(0, 3).join(", ")
     const moreCount = event.attendees.length - 3
-    card += `   👥 ${attendeesPreview}${moreCount > 0 ? ` и ещё ${moreCount}` : ""}\n`
+    const attendeesText = `${attendeesPreview}${
+      moreCount > 0 ? ` и ещё ${moreCount}` : ""
+    }`
+    card += `   👥 ${escapeMarkdown(attendeesText)}\n`
   }
 
   if (event.categories && event.categories.length > 0) {
-    const tags = event.categories.map((category) => `#${category.replace(/\s+/g, "_")}`).join(" ")
-    card += `   🏷 ${tags}\n`
+    const tags = event.categories
+      .map((category) => `#${category.replace(/\s+/g, "_")}`)
+      .join(" ")
+    card += `   🏷 ${escapeMarkdown(tags)}\n`
   }
 
   return card.trimEnd()
