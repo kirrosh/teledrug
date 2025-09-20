@@ -1,5 +1,5 @@
 import { Effect, Console } from "effect";
-import { db } from "../../storage/database/client";
+import { db, sql } from "../../storage/database/client";
 import { users } from "../../storage/database/schema";
 
 const greetingMessage = "Привет! Хорошего дня!";
@@ -62,9 +62,10 @@ const program = Effect.gen(function* () {
     (chatId) =>
       sendTelegramMessage(token, chatId, greetingMessage).pipe(
         Effect.tapBoth({
-          onSuccess: () => Effect.sync(() => {
-            success += 1;
-          }),
+          onSuccess: () =>
+            Effect.sync(() => {
+              success += 1;
+            }),
           onFailure: (error) =>
             Console.error(`❌ Failed to send greeting to ${chatId}:`, error),
         }),
@@ -78,7 +79,18 @@ const program = Effect.gen(function* () {
   );
 });
 
-Effect.runPromise(program).catch((error) => {
-  console.error("❌ Daily greeting job failed:", error);
-  process.exit(1);
-});
+Effect.runPromise(program)
+  .catch((error) => {
+    console.error("❌ Daily greeting job failed:", error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    return await sql
+      .end()
+      .catch((error) =>
+        console.error("⚠️ Failed to close database connection:", error)
+      );
+  })
+  .then(() => {
+    process.exit(process.exitCode ?? 0);
+  });
