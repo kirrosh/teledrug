@@ -6,7 +6,6 @@ import {
 } from "../errors";
 import { TelegramClient } from "./telegram-client";
 import { MessageHistory } from "./message-history";
-// import { CryptographyService } from "./cryptography" // Не используется в первой итерации
 
 // Service interface
 export interface BotApplication {

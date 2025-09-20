@@ -1,5 +1,4 @@
-// Compatibility entrypoint that exposes Effect-based bot
-import "./effect/index";
+import "@teledrug/core/effect/index";
 
 const port = Number(process.env.PORT || 3000);
 

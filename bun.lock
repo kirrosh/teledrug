@@ -3,25 +3,43 @@
   "workspaces": {
     "": {
       "name": "teledrug",
+      "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "^5",
+      },
+    },
+    "apps/bot": {
+      "name": "@teledrug/bot",
+      "version": "0.1.0",
+      "dependencies": {
+        "@teledrug/core": "workspace:*",
+      },
+    },
+    "apps/daily-greeting": {
+      "name": "@teledrug/daily-greeting",
+      "version": "0.1.0",
+      "dependencies": {
+        "@teledrug/core": "workspace:*",
+      },
+    },
+    "packages/core": {
+      "name": "@teledrug/core",
+      "version": "0.1.0",
       "dependencies": {
         "@ai-sdk/openai": "^2.0.32",
         "@effect/platform": "^0.90.10",
         "@effect/platform-node": "^0.96.1",
         "@effect/schema": "^0.75.5",
         "ai": "^5.0.45",
+        "drizzle-orm": "^0.44.5",
         "effect": "^3.17.13",
         "grammy": "^1.38.2",
+        "postgres": "^3.4.7",
         "tsdav": "^2.1.5",
         "zod": "^4.1.5",
       },
       "devDependencies": {
-        "@types/bun": "latest",
         "drizzle-kit": "^0.31.4",
-        "drizzle-orm": "^0.44.5",
-        "postgres": "^3.4.7",
-      },
-      "peerDependencies": {
-        "typescript": "^5",
       },
     },
   },
@@ -155,6 +173,12 @@
     "@parcel/watcher-win32-x64": ["@parcel/watcher-win32-x64@2.5.1", "", { "os": "win32", "cpu": "x64" }, "sha512-9lHBdJITeNR++EvSQVUcaZoWupyHfXe1jZvGZ06O/5MflPcuPLtEphScIBL+AiCWBO46tDSHzWyD0uDmmZqsgA=="],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.0.0", "", {}, "sha512-m2bOd0f2RT9k8QJx1JN85cZYyH1RqFBdlwtkSlf4tBDYLCiiZnv1fIIwacK6cqwXavOydf0NPToMQgpKq+dVlA=="],
+
+    "@teledrug/bot": ["@teledrug/bot@workspace:apps/bot"],
+
+    "@teledrug/core": ["@teledrug/core@workspace:packages/core"],
+
+    "@teledrug/daily-greeting": ["@teledrug/daily-greeting@workspace:apps/daily-greeting"],
 
     "@types/bun": ["@types/bun@1.2.21", "", { "dependencies": { "bun-types": "1.2.21" } }, "sha512-NiDnvEqmbfQ6dmZ3EeUO577s4P5bf4HCTXtI6trMc6f6RzirY5IrF3aIookuSpyslFzrnvv2lmEWv5HyC1X79A=="],
 
