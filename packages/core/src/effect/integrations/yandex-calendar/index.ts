@@ -221,7 +221,7 @@ const parseICalendarDate = (rawValue: string): Date => {
     : new Date(year, month, day, hour, minute, second)
 }
 
-const filterEventsByDateRange = (
+export const filterEventsByDateRange = (
   events: CalendarEvent[],
   params: GetEventsParams
 ) => {
@@ -260,7 +260,7 @@ const applyLimit = (events: CalendarEvent[], limit?: number) => {
   return events.slice(0, limit)
 }
 
-const sortEventsByStartDate = (events: CalendarEvent[]) =>
+export const sortEventsByStartDate = (events: CalendarEvent[]) =>
   events
     .slice()
     .sort(
@@ -755,3 +755,22 @@ export const YandexCalendarIntegration = {
   name: "YandexCalendar",
   createTools: createYandexCalendarTools
 }
+
+export const fetchEventsForRange = async (
+  credentials: YandexCredentials,
+  start: Date,
+  end: Date
+) => {
+  const events = await fetchCalendarEvents(credentials)
+
+  const filtered = filterEventsByDateRange(events, {
+    dateRange: {
+      start: start.toISOString(),
+      end: end.toISOString()
+    }
+  })
+
+  return sortEventsByStartDate(filtered)
+}
+
+export type { CalendarEvent };
