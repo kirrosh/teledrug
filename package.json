@@ -1,35 +1,23 @@
 {
-  "name": "teledrug",
-  "module": "src/index.ts",
+  "name": "teledrug-monorepo",
+  "version": "0.1.0",
   "type": "module",
   "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "devDependencies": {
     "@types/bun": "latest",
-    "drizzle-kit": "^0.31.4",
-    "drizzle-orm": "^0.44.5",
-    "postgres": "^3.4.7"
-  },
-  "peerDependencies": {
     "typescript": "^5"
   },
   "scripts": {
-    "build": "bun build src/index.ts --outdir dist --target bun",
-    "start": "bun run dist/index.js",
-    "dev": "bun run src/index.ts",
-    "digest:send": "bun run src/effect/cron/send-daily-greeting.ts",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
-  },
-  "dependencies": {
-    "@ai-sdk/openai": "^2.0.32",
-    "@effect/platform": "^0.90.10",
-    "@effect/platform-node": "^0.96.1",
-    "@effect/schema": "^0.75.5",
-    "ai": "^5.0.45",
-    "effect": "^3.17.13",
-    "grammy": "^1.38.2",
-    "tsdav": "^2.1.5",
-    "zod": "^4.1.5"
+    "build": "bun run --filter @teledrug/core build && bun run --filter @teledrug/bot build && bun run --filter @teledrug/daily-greeting build",
+    "bot:dev": "bun run --filter @teledrug/bot dev",
+    "bot:start": "bun run --filter @teledrug/bot start",
+    "digest:send": "bun run --filter @teledrug/daily-greeting start",
+    "db:generate": "bun run --filter @teledrug/core db:generate",
+    "db:migrate": "bun run --filter @teledrug/core db:migrate",
+    "db:studio": "bun run --filter @teledrug/core db:studio"
   }
 }
