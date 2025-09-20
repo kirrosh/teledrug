@@ -2,8 +2,7 @@ import { Effect, Console } from "effect";
 import { db } from "../../storage/database/client";
 import { users } from "../../storage/database/schema";
 
-const greetingMessage =
-  process.env.DIGEST_GREETING_MESSAGE ?? "Привет! Хорошего дня!";
+const greetingMessage = "Привет! Хорошего дня!";
 
 const fetchRecipients = Effect.tryPromise(async () => {
   const rows = await db.select({ telegramId: users.telegramId }).from(users);
@@ -17,18 +16,6 @@ const fetchRecipients = Effect.tryPromise(async () => {
     )
   )
 );
-
-const fallbackRecipients = (): readonly number[] => {
-  const raw = process.env.DEFAULT_DIGEST_CHAT_ID;
-  if (!raw) {
-    return [];
-  }
-
-  return raw
-    .split(",")
-    .map((value) => Number.parseInt(value.trim(), 10))
-    .filter((value) => Number.isFinite(value));
-};
 
 const sendTelegramMessage = (token: string, chatId: number, text: string) =>
   Effect.tryPromise(async () => {
@@ -59,13 +46,11 @@ const program = Effect.gen(function* () {
     return;
   }
 
-  const recipientsFromDb = yield* fetchRecipients;
-  const recipients =
-    recipientsFromDb.length > 0 ? recipientsFromDb : fallbackRecipients();
+  const recipients = yield* fetchRecipients;
 
   if (recipients.length === 0) {
     yield* Console.log(
-      "⚠️ Daily greeting skipped: no recipients in database or DEFAULT_DIGEST_CHAT_ID"
+      "⚠️ Daily greeting skipped: no recipients found in database"
     );
     return;
   }
