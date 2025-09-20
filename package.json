@@ -16,6 +16,7 @@
     "build": "bun build src/index.ts --outdir dist --target bun",
     "start": "bun run dist/index.js",
     "dev": "bun run src/index.ts",
+    "digest:send": "bun run src/effect/cron/send-daily-greeting.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"
