@@ -8,6 +8,7 @@ import { UserRepositoryLive } from "../services/user-repository";
 import { UserConfigStorageLive } from "../services/user-config-storage";
 import { AIAgentFactoryLive } from "../services/ai-agent";
 import { IntegrationRegistryLive } from "../services/integration-registry";
+import { DigestSettingsRepositoryLive } from "../services/digest-settings";
 import type { BotConfig } from "../types";
 
 // Create main application layer
@@ -20,9 +21,12 @@ export const createMainLayer = (
   const messageHistory = MessageHistoryLive;
 
   // Level 1: UserRepository требует EncryptionService
+  const digestSettings = DigestSettingsRepositoryLive;
+
   const userRepository = pipe(
     UserRepositoryLive,
-    Layer.provide(encryption)  // ✅ Явно предоставляем зависимость
+    Layer.provide(encryption),
+    Layer.provide(digestSettings)
   );
 
   // Level 2: UserConfigStorage требует UserRepository
@@ -72,7 +76,8 @@ export const createMainLayer = (
     integrationRegistry,
 
     // Сервисы с разрешенными зависимостями
-    userRepository,     // Уже имеет encryption
+    digestSettings,
+    userRepository,     // Уже имеет encryption и digest settings
     userConfig,         // Уже имеет userRepository
     aiAgent,           // Уже имеет integrationRegistry
     telegram           // Уже имеет все необходимое

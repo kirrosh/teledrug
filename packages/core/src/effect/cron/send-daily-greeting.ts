@@ -1,17 +1,12 @@
-import { Effect, Console, Schema, Option, Layer, pipe } from "effect";
+import { Effect, Console, Layer, pipe } from "effect";
 import { db, sql } from "../../storage/database/client";
 import { users } from "../../storage/database/schema";
-import { UserRepository } from "../services/user-repository";
+import { DigestSettingsRepositoryLive } from "../services/digest-settings";
 import { UserRepositoryLive } from "../services/user-repository";
 import { EncryptionServiceLive } from "../services/encryption";
-import {
-  YandexCredentials,
-  fetchEventsForRange,
-  sortEventsByStartDate,
-  type CalendarEvent,
-} from "../integrations/yandex-calendar";
+import { runDailyDigest } from "../digest/runner";
 
-const greetingMessage = "Привет! Хорошего дня!";
+const greetingPrefix = "🌞 Доброе утро!";
 
 const fetchRecipients = Effect.tryPromise(async () => {
   const rows = await db.select({ telegramId: users.telegramId }).from(users);
@@ -52,107 +47,37 @@ const sendTelegramMessage = (
   }).pipe(
     Effect.as(true),
     Effect.catchAll((error) =>
-      Console.error(`❌ Failed to send greeting to ${chatId}:`, error).pipe(
+      Console.error(`❌ Failed to send digest to ${chatId}:`, error).pipe(
         Effect.flatMap(() => Effect.succeed(false))
       )
     )
   );
 
-const startOfToday = () => {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date;
-};
+const composeMessage = (userId: number, date: Date) =>
+  runDailyDigest(userId, date).pipe(
+    Effect.map((modules) => {
+      const body = modules
+        .map((module) => module.text)
+        .filter((text): text is string => Boolean(text && text.trim().length > 0))
+        .join("\n\n");
 
-const endOfToday = () => {
-  const date = startOfToday();
-  date.setDate(date.getDate() + 1);
-  date.setMilliseconds(date.getMilliseconds() - 1);
-  return date;
-};
-
-const timeFormatter = new Intl.DateTimeFormat("ru-RU", {
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-const formatEventLine = (event: CalendarEvent) => {
-  const start = new Date(event.startDate);
-  const end = new Date(event.endDate);
-  const timeRange = `${timeFormatter.format(start)}–${timeFormatter.format(end)}`;
-  const location = event.location ? ` (${event.location})` : "";
-  return `• ${timeRange} — ${event.summary}${location}`;
-};
-
-const decodeCredentials = (raw: Record<string, unknown>) =>
-  Schema.decodeUnknown(YandexCredentials)(raw).pipe(
-    Effect.map(Option.some),
-    Effect.catchAll((error) =>
-      Console.error("❌ Invalid Yandex credentials:", error).pipe(
-        Effect.flatMap(() => Effect.succeed(Option.none()))
-      )
-    )
-  );
-
-const collectTodayEvents = (
-  credentialsList: ReadonlyArray<Record<string, unknown>>
-) =>
-  Effect.gen(function* () {
-    const start = startOfToday();
-    const end = endOfToday();
-    let events: CalendarEvent[] = [];
-
-    for (const rawCredentials of credentialsList) {
-      const maybeCredentials = yield* decodeCredentials(rawCredentials);
-      if (Option.isNone(maybeCredentials)) {
-        continue;
+      if (body.length === 0) {
+        return `${greetingPrefix}\n\nСегодня свободный день 🙌`;
       }
 
-      const fetched = yield* Effect.tryPromise(() =>
-        fetchEventsForRange(maybeCredentials.value, start, end)
-      ).pipe(
-        Effect.catchAll((error) =>
-          Console.error("❌ Failed to fetch Yandex events:", error).pipe(
-            Effect.flatMap(() => Effect.succeed<CalendarEvent[]>([]))
-          )
-        )
-      );
+      return `${greetingPrefix}\n\n${body}`;
+    })
+  );
 
-      events = events.concat(fetched);
-    }
-
-    return sortEventsByStartDate(events);
-  });
-
-const buildDigestMessage = (userId: number) =>
-  Effect.gen(function* () {
-    const userRepository = yield* UserRepository;
-    const integrations = yield* userRepository.getAllDecryptedIntegrations(
-      userId
-    );
-
-    const yandexCredentials = integrations
-      .filter(
-        (entry) =>
-          entry.integration.integrationType === "YandexCalendar" &&
-          entry.integration.enabled
-      )
-      .map((entry) => entry.credentials);
-
-    const events = yield* collectTodayEvents(yandexCredentials);
-
-    if (events.length === 0) {
-      return "🌞 Доброе утро!\n\nСегодня свободный день 🙌";
-    }
-
-    const lines = events.map(formatEventLine).join("\n");
-    return `🌞 Доброе утро!\n\n📅 События на сегодня:\n${lines}`;
-  });
+const digestLayer = DigestSettingsRepositoryLive;
 
 const userRepositoryLayer = pipe(
   UserRepositoryLive,
-  Layer.provide(EncryptionServiceLive)
+  Layer.provide(EncryptionServiceLive),
+  Layer.provide(digestLayer)
 );
+
+const servicesLayer = Layer.mergeAll(digestLayer, userRepositoryLayer);
 
 const program = Effect.gen(function* () {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -166,21 +91,21 @@ const program = Effect.gen(function* () {
 
   if (recipients.length === 0) {
     yield* Console.log(
-      "⚠️ Daily greeting skipped: no recipients found in database"
+      "⚠️ Daily digest skipped: no recipients found in database"
     );
     return;
   }
 
   let success = 0;
+  const today = new Date();
 
   yield* Effect.forEach(
     recipients,
     (chatId) =>
       Effect.gen(function* () {
-        const message = yield* buildDigestMessage(chatId).pipe(
-          Effect.catchAll(() => Effect.succeed(greetingMessage))
+        const message = yield* composeMessage(chatId, today).pipe(
+          Effect.catchAll(() => Effect.succeed(`${greetingPrefix}\n\nХорошего дня!`))
         );
-
         const sent = yield* sendTelegramMessage(token, chatId, message);
         if (sent) {
           success += 1;
@@ -190,13 +115,13 @@ const program = Effect.gen(function* () {
   );
 
   yield* Console.log(
-    `✅ Daily greeting processed (${success}/${recipients.length})`
+    `✅ Daily digest processed (${success}/${recipients.length})`
   );
-}).pipe(Effect.provide(userRepositoryLayer));
+}).pipe(Effect.provide(servicesLayer));
 
 Effect.runPromise(program)
   .catch((error) => {
-    console.error("❌ Daily greeting job failed:", error);
+    console.error("❌ Daily digest job failed:", error);
     process.exitCode = 1;
   })
   .finally(async () => {

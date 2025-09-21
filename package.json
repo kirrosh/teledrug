@@ -9,15 +9,16 @@
   ],
   "devDependencies": {
     "@types/bun": "latest",
-    "typescript": "^5"
+    "drizzle-kit": "^0.31.4",
+    "typescript": "5.9.2"
   },
   "scripts": {
     "build": "bun run --filter @teledrug/core build && bun run --filter @teledrug/bot build && bun run --filter @teledrug/daily-greeting build",
     "bot:dev": "bun run --filter @teledrug/bot dev",
     "bot:start": "bun run --filter @teledrug/bot start",
     "digest:send": "bun run --filter @teledrug/daily-greeting start",
-    "db:generate": "bun run --filter @teledrug/core db:generate",
-    "db:migrate": "bun run --filter @teledrug/core db:migrate",
-    "db:studio": "bun run --filter @teledrug/core db:studio"
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
+    "db:studio": "drizzle-kit studio --config drizzle.config.ts"
   }
 }
