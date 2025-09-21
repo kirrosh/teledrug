@@ -38,7 +38,8 @@ export const createMainLayer = (
   // Level 2: IntegrationRegistry требует UserRepository
   const integrationRegistry = pipe(
     IntegrationRegistryLive,
-    Layer.provide(userRepository) // ✅ Предоставляем доступ к данным пользователя
+    Layer.provide(userRepository), // ✅ Предоставляем доступ к данным пользователя
+    Layer.provide(digestSettings)  // ✅ Для инструментов дайджеста
   );
 
   // Level 1: AIAgent требует IntegrationRegistry

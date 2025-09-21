@@ -22,6 +22,18 @@ export interface DigestSettingsRepository {
   readonly ensureDefaultSettings: (
     userId: number
   ) => Effect.Effect<void, never>;
+  readonly updateModuleSettings: (
+    userId: number,
+    module: DigestModuleId,
+    update: {
+      readonly enabled?: boolean;
+      readonly settings?: Record<string, unknown> | null;
+    }
+  ) => Effect.Effect<void, never>;
+  readonly setAllModulesEnabled: (
+    userId: number,
+    enabled: boolean
+  ) => Effect.Effect<void, never>;
 }
 
 export const DigestSettingsRepository = Context.GenericTag<DigestSettingsRepository>(
@@ -54,10 +66,51 @@ const DEFAULT_MODULES: ReadonlyArray<{
   },
 ];
 
+const DEFAULT_MODULES_MAP = new Map(
+  DEFAULT_MODULES.map((entry) => [entry.module, entry])
+);
+
+type ModuleMap = Map<DigestModuleId, DigestModule>;
+type SettingsRows = ReadonlyArray<
+  {
+    digest_modules: DigestModule;
+    digest_module_settings: typeof digestModuleSettings.$inferSelect | null;
+  }
+>;
+
+type UpdatePatch = {
+  readonly enabled?: boolean;
+  readonly settings?: Record<string, unknown> | null;
+};
+
+type MergeSettings = (
+  current: Record<string, unknown> | null,
+  patch: Record<string, unknown> | null | undefined
+) => Record<string, unknown> | null;
+
+type UpdateModuleFn = (
+  userId: number,
+  module: DigestModuleId,
+  update: UpdatePatch
+) => Effect.Effect<void, never>;
+
+type SetAllFn = (
+  userId: number,
+  enabled: boolean
+) => Effect.Effect<void, never>;
+
+type GetSettingsFn = (
+  userId: number
+) => Effect.Effect<ReadonlyArray<ModuleSettingEntry>, never>;
+
+type EnsureDefaultsFn = (
+  userId: number
+) => Effect.Effect<void, never>;
+
 const makeRepository = Effect.gen(function* () {
   const loadModules = Effect.tryPromise(async () => {
     const rows = await db.select().from(digestModules);
-    const map = new Map<DigestModuleId, DigestModule>();
+    const map: ModuleMap = new Map();
 
     for (const row of rows) {
       map.set(row.module as DigestModuleId, row);
@@ -84,70 +137,184 @@ const makeRepository = Effect.gen(function* () {
     )
   );
 
-  const getSettingsByUser = (userId: number) =>
-    ensureModulesExist.pipe(
-      Effect.flatMap(() =>
-        Effect.tryPromise(async () => {
-          const rows = await db
-            .select()
-            .from(digestModules)
-            .leftJoin(
-              digestModuleSettings,
-              and(
-                eq(digestModuleSettings.userId, userId),
-                eq(digestModuleSettings.moduleId, digestModules.id)
-              )
-            );
+  const getModuleMap: Effect.Effect<ModuleMap, never> = ensureModulesExist.pipe(
+    Effect.flatMap(() => loadModules),
+    Effect.catchAll(() => Effect.succeed(new Map()))
+  );
 
-          return rows.map((row) => ({
-            module: row.digest_modules.module as DigestModuleId,
-            enabled: row.digest_module_settings
-              ? row.digest_module_settings.enabled
-              : DEFAULT_MODULES.find((m) => m.module === row.digest_modules.module)
-                  ?.enabled ?? true,
-            settings: row.digest_module_settings
-              ? (row.digest_module_settings.settings as Record<string, unknown> | null)
-              : DEFAULT_MODULES.find((m) => m.module === row.digest_modules.module)
-                  ?.settings ?? null,
-          } satisfies ModuleSettingEntry));
-        }).pipe(
-          Effect.catchAll(() => Effect.succeed<ReadonlyArray<ModuleSettingEntry>>([]))
+  const fetchSettingsRows = (userId: number): Effect.Effect<SettingsRows, never> =>
+    Effect.tryPromise(async () =>
+      await db
+        .select()
+        .from(digestModules)
+        .leftJoin(
+          digestModuleSettings,
+          and(
+            eq(digestModuleSettings.userId, userId),
+            eq(digestModuleSettings.moduleId, digestModules.id)
+          )
+        )
+    ).pipe(Effect.catchAll(() => Effect.succeed<SettingsRows>([])));
+
+const computeEntry = (
+  row: SettingsRows[number],
+  defaults: {
+    readonly enabled: boolean;
+    readonly settings: Record<string, unknown> | null;
+  } | undefined
+): ModuleSettingEntry => ({
+    module: row.digest_modules.module as DigestModuleId,
+    enabled: row.digest_module_settings?.enabled ?? defaults?.enabled ?? true,
+    settings:
+      (row.digest_module_settings
+        ?.settings as Record<string, unknown> | null) ??
+      defaults?.settings ??
+      null,
+  });
+
+  const getSettingsByUser: GetSettingsFn = (userId) =>
+    getModuleMap.pipe(
+      Effect.flatMap((moduleMap) =>
+        fetchSettingsRows(userId).pipe(
+          Effect.map((rows) =>
+            rows.map((row) =>
+              computeEntry(
+                row,
+                DEFAULT_MODULES_MAP.get(row.digest_modules.module as DigestModuleId)
+              )
+            )
+          )
         )
       )
     );
 
-  const ensureDefaultSettings = (userId: number) =>
-    ensureModulesExist.pipe(
-      Effect.flatMap(() =>
-        Effect.tryPromise(async () => {
-          const modules = await db.select().from(digestModules);
-
-          for (const module of modules) {
-            const defaults = DEFAULT_MODULES.find(
-              (entry) => entry.module === module.module
+  const ensureDefaultSettings: EnsureDefaultsFn = (userId) =>
+    getModuleMap.pipe(
+      Effect.flatMap((modules) =>
+        Effect.forEach(
+          modules.values(),
+          (module) => {
+            const defaults = DEFAULT_MODULES_MAP.get(
+              module.module as DigestModuleId
             );
-            if (!defaults) {
-              continue;
-            }
 
+            return defaults
+              ? Effect.tryPromise(async () => {
+                  await db
+                    .insert(digestModuleSettings)
+                    .values({
+                      userId,
+                      moduleId: module.id,
+                      enabled: defaults.enabled,
+                      settings: defaults.settings,
+                    })
+                    .onConflictDoNothing();
+                }).pipe(Effect.catchAll(() => Effect.void))
+              : Effect.void;
+          },
+          { discard: true }
+        )
+      )
+    );
+
+  const mergeSettings: MergeSettings = (current, patch) => {
+    if (!patch) {
+      return current ?? null;
+    }
+    const base = current ? { ...current } : {};
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined || value === null) {
+        delete base[key];
+      } else {
+        base[key] = value;
+      }
+    }
+    return Object.keys(base).length > 0 ? base : null;
+  };
+
+  const updateModuleSettings: UpdateModuleFn = (userId, module, update) =>
+    getModuleMap.pipe(
+      Effect.flatMap((modules) => {
+        const moduleRow = modules.get(module);
+        if (!moduleRow) {
+          return Effect.void;
+        }
+
+        const defaults = DEFAULT_MODULES_MAP.get(module);
+
+        return Effect.gen(function* () {
+          yield* ensureDefaultSettings(userId);
+
+          const existingRows = yield* Effect.tryPromise(async () =>
+            await db
+              .select()
+              .from(digestModuleSettings)
+              .where(
+                and(
+                  eq(digestModuleSettings.userId, userId),
+                  eq(digestModuleSettings.moduleId, moduleRow.id)
+                )
+              )
+              .limit(1)
+          ).pipe(Effect.catchAll(() => Effect.succeed([])));
+
+          const existing = existingRows[0];
+
+          const currentEnabled =
+            existing?.enabled ?? defaults?.enabled ?? true;
+
+          const currentSettings =
+            (existing?.settings as Record<string, unknown> | null) ??
+            (defaults?.settings ?? null);
+
+          const nextEnabled = update.enabled ?? currentEnabled;
+
+          const nextSettings = mergeSettings(currentSettings, update.settings);
+
+          yield* Effect.tryPromise(async () => {
             await db
               .insert(digestModuleSettings)
               .values({
                 userId,
-                moduleId: module.id,
-                enabled: defaults.enabled,
-                settings: defaults.settings,
+                moduleId: moduleRow.id,
+                enabled: nextEnabled,
+                settings: nextSettings,
               })
-              .onConflictDoNothing();
-          }
-        }).pipe(Effect.catchAll(() => Effect.void))
+              .onConflictDoUpdate({
+                target: [
+                  digestModuleSettings.userId,
+                  digestModuleSettings.moduleId,
+                ],
+                set: {
+                  enabled: nextEnabled,
+                  settings: nextSettings,
+                  updatedAt: new Date(),
+                },
+              });
+          }).pipe(Effect.catchAll(() => Effect.void));
+        });
+      })
+    );
+
+  const setAllModulesEnabled: SetAllFn = (userId, enabled) =>
+    getModuleMap.pipe(
+      Effect.flatMap((modules) =>
+        Effect.forEach(
+          modules.keys(),
+          (module) => updateModuleSettings(userId, module, { enabled }),
+          { discard: true }
+        )
       )
     );
 
-  return DigestSettingsRepository.of({
+  const repo: DigestSettingsRepository = {
     getSettingsByUser,
     ensureDefaultSettings,
-  });
+    updateModuleSettings,
+    setAllModulesEnabled,
+  };
+
+  return DigestSettingsRepository.of(repo);
 });
 
 export const DigestSettingsRepositoryLive = Layer.effect(
