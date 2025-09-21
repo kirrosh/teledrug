@@ -3,6 +3,8 @@ import type { DigestModuleImpl } from "../types";
 import type { ModuleSettingEntry } from "../../services/digest-settings";
 
 const fxCache = new Map<string, FxSummary>();
+const DEFAULT_BASE = "USD";
+const DEFAULT_QUOTE = "RUB";
 
 interface FxSummary {
   readonly summary: string;
@@ -22,9 +24,13 @@ const parseSettings = (
   const value = settings.settings;
   return {
     base: typeof value.base === "string" ? value.base.toUpperCase() : undefined,
-    quote: typeof value.quote === "string" ? value.quote.toUpperCase() : undefined,
+    quote: typeof value.quote === "string"
+      ? value.quote.toUpperCase()
+      : undefined,
   };
 };
+
+const formatDate = (date: Date) => date.toISOString().slice(0, 10);
 
 const fetchFxRate = (base: string, quote: string) =>
   Effect.tryPromise(async () => {
@@ -34,41 +40,55 @@ const fetchFxRate = (base: string, quote: string) =>
       return cached;
     }
 
-    const params = new URLSearchParams({ base, symbols: quote });
     const latestResponse = await fetch(
-      `https://api.exchangerate.host/latest?${params.toString()}`
+      `https://open.er-api.com/v6/latest/${encodeURIComponent(base)}`
     );
 
     if (!latestResponse.ok) {
-      throw new Error(`FX latest request failed: ${latestResponse.status}`);
+      throw new Error(
+        `FX latest request failed: ${latestResponse.status} ${latestResponse.statusText}`
+      );
     }
 
     const latestPayload = (await latestResponse.json()) as {
+      result?: string;
       rates?: Record<string, number>;
-      date?: string;
+      time_last_update_utc?: string;
     };
+
+    if (latestPayload.result !== "success") {
+      throw new Error(`FX API responded with result "${latestPayload.result}"`);
+    }
 
     const rate = latestPayload.rates?.[quote];
     if (rate === undefined) {
       return null;
     }
 
-    const fluctuationResponse = await fetch(
-      `https://api.exchangerate.host/fluctuation?${params.toString()}`
+    const today = new Date();
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(today.getDate() - 30);
+
+    let changePct: number | undefined = undefined;
+
+    const histResponse = await fetch(
+      `https://open.er-api.com/v6/history/${encodeURIComponent(base)}/${encodeURIComponent(quote)}?start=${formatDate(thirtyDaysAgo)}&end=${formatDate(today)}`
     );
 
-    if (!fluctuationResponse.ok) {
-      throw new Error(
-        `FX fluctuation request failed: ${fluctuationResponse.status}`
-      );
+    if (histResponse.ok) {
+      const histPayload = (await histResponse.json()) as {
+        result?: string;
+        rates?: Record<string, Record<string, number>>;
+      };
+
+      if (histPayload.result === "success" && histPayload.rates) {
+        const keys = Object.keys(histPayload.rates).sort();
+        const firstDay = histPayload.rates[keys[0]]?.[quote];
+        if (firstDay && firstDay !== 0) {
+          changePct = ((rate - firstDay) / firstDay) * 100;
+        }
+      }
     }
-
-    const fluctuationPayload = (await fluctuationResponse.json()) as {
-      rates?: Record<string, { change_pct?: number }>;
-    };
-
-    const changePct =
-      fluctuationPayload.rates?.[quote]?.change_pct ?? undefined;
 
     const summary = formatFxSummary(base, quote, rate, changePct);
     const result: FxSummary = { summary };
@@ -98,8 +118,8 @@ export const FxDigestModule: DigestModuleImpl = {
       }
 
       const settings = parseSettings(entry);
-      const base = settings.base ?? "USD";
-      const quote = settings.quote ?? "RUB";
+      const base = settings.base ?? DEFAULT_BASE;
+      const quote = settings.quote ?? DEFAULT_QUOTE;
 
       const fx = yield* fetchFxRate(base, quote).pipe(
         Effect.catchAll((error) =>
