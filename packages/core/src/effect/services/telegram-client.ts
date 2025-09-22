@@ -1,13 +1,25 @@
 import { Effect, Context, Layer } from "effect";
 import { Bot } from "grammy";
+import type { InlineKeyboardMarkup } from "grammy/types";
 import { TelegramClientError } from "../errors";
 import { UserConfigStorage } from "./user-config-storage";
 import { AIAgentFactory } from "./ai-agent";
 import { MessageHistory } from "./message-history";
 import { IntegrationRegistry } from "./integration-registry";
+import { JournalRepository } from "./journal-repository";
 import { ToolProgressReporter } from "../core/tool-progress";
 import type { BotConfig, UpdateContext } from "../types";
-import type { ToolResultFormatter } from "../types/integrations";
+import type {
+  ToolFormatterResult,
+  ToolResultFormatter,
+} from "../types/integrations";
+
+interface AggregatedToolResponse {
+  readonly text: string;
+  readonly parseMode?: "Markdown" | "HTML";
+  readonly replyMarkup?: InlineKeyboardMarkup;
+  readonly metadata?: Record<string, unknown>;
+}
 
 // Helper function to generate response from tool results
 const generateResponseFromToolResults = (
@@ -16,10 +28,12 @@ const generateResponseFromToolResults = (
 ) =>
   Effect.gen(function* () {
     if (!toolResults || toolResults.length === 0) {
-      return "❌ Извините, не удалось получить результаты.";
+      return {
+        text: "❌ Извините, не удалось получить результаты.",
+      } satisfies AggregatedToolResponse;
     }
 
-    const responses: string[] = [];
+    const responses: ToolFormatterResult[] = [];
 
     for (const toolResult of toolResults) {
       const formatter = formatters[toolResult.toolName];
@@ -28,24 +42,46 @@ const generateResponseFromToolResults = (
         const formatted = yield* formatter(toolResult.output);
         responses.push(formatted);
       } else if (toolResult.output && typeof toolResult.output === "object") {
-        responses.push(
-          `🛠️ ${toolResult.toolName}: ${JSON.stringify(
+        responses.push({
+          text: `🛠️ ${toolResult.toolName}: ${JSON.stringify(
             toolResult.output,
             null,
             2
-          )}`
-        );
+          )}`,
+        });
       } else {
-        responses.push(
-          `🛠️ ${toolResult.toolName}: ${String(toolResult.output)}`
-        );
+        responses.push({
+          text: `🛠️ ${toolResult.toolName}: ${String(toolResult.output)}`,
+        });
       }
     }
 
-    return (
-      responses.join("\n\n").trim() ||
-      "❌ Извините, не удалось обработать результаты."
-    );
+    const text = responses
+      .map((response) => response.text?.trim())
+      .filter((value): value is string => Boolean(value && value.length > 0))
+      .join("\n\n")
+      .trim();
+
+    const parseMode = responses.find((response) => response.parseMode)?.parseMode;
+    const replyMarkup = responses.find((response) => response.replyMarkup)?.replyMarkup;
+
+    const metadataEntries = responses
+      .map((response) => response.metadata)
+      .filter((meta): meta is Record<string, unknown> => Boolean(meta));
+
+    const metadata = metadataEntries.length
+      ? metadataEntries.reduce<Record<string, unknown>>(
+          (acc, current) => ({ ...acc, ...current }),
+          {}
+        )
+      : undefined;
+
+    return {
+      text: text || "❌ Извините, не удалось обработать результаты.",
+      parseMode,
+      replyMarkup,
+      metadata,
+    } satisfies AggregatedToolResponse;
   });
 
 // Service interface
@@ -73,6 +109,7 @@ const makeTelegramClient = (config: BotConfig) =>
     const aiAgentFactory = yield* AIAgentFactory;
     const messageHistory = yield* MessageHistory;
     const integrationRegistry = yield* IntegrationRegistry;
+    const journalRepository = yield* JournalRepository;
 
     // Create bot instance directly
     const bot = new Bot(config.telegramToken);
@@ -141,6 +178,59 @@ const makeTelegramClient = (config: BotConfig) =>
         }
       });
 
+      bot.on("callback_query:data", async (ctx) => {
+        const data = ctx.callbackQuery.data || "";
+
+        if (!data.startsWith("journal:")) {
+          await ctx.answerCallbackQuery();
+          return;
+        }
+
+        if (data.startsWith("journal:delete:")) {
+          const [, , entryIdRaw] = data.split(":");
+          const entryId = Number.parseInt(entryIdRaw, 10);
+          const userId = ctx.from?.id || ctx.chat?.id;
+
+          if (!userId || Number.isNaN(entryId)) {
+            await ctx.answerCallbackQuery({
+              text: "❌ Не удалось удалить запись",
+              show_alert: true,
+            });
+            return;
+          }
+
+          try {
+            const deleted = await Effect.runPromise(
+              journalRepository.deleteEntry(entryId, userId)
+            );
+
+            if (deleted) {
+              await ctx.answerCallbackQuery({ text: "🗑 Запись удалена" });
+              try {
+                await ctx.editMessageText("Запись не сохранена");
+              } catch (error) {
+                console.error("Не удалось обновить сообщение после удаления:", error);
+              }
+            } else {
+              await ctx.answerCallbackQuery({
+                text: "⚠️ Запись уже удалена",
+                show_alert: false,
+              });
+            }
+          } catch (error) {
+            console.error("Ошибка при удалении записи дневника:", error);
+            await ctx.answerCallbackQuery({
+              text: "❌ Не удалось удалить запись",
+              show_alert: true,
+            });
+          }
+
+          return;
+        }
+
+        await ctx.answerCallbackQuery();
+      });
+
       // Handle text messages with AI Agent
       bot.on("message:text", async (ctx) => {
         const chatId = ctx.chat.id;
@@ -177,17 +267,31 @@ const makeTelegramClient = (config: BotConfig) =>
           const updateProgress = (emoji: string, message: string) =>
             editMessageSafe(`${emoji} ${message}`);
 
-          const finalizeMessage = (finalText: string, useMarkdown: boolean) => {
-            const options = useMarkdown ? { parse_mode: "Markdown" as const } : undefined;
+          const finalizeMessage = (response: AggregatedToolResponse) => {
+            const options = (
+              response.parseMode || response.replyMarkup
+                ? {
+                    ...(response.parseMode
+                      ? { parse_mode: response.parseMode }
+                      : {}),
+                    ...(response.replyMarkup
+                      ? { reply_markup: response.replyMarkup }
+                      : {}),
+                  }
+                : undefined
+            ) as Parameters<typeof ctx.api.editMessageText>[3] | undefined;
 
             const editEffect = options
-              ? editMessageSafe(finalText, options)
-              : editMessageSafe(finalText);
+              ? editMessageSafe(response.text, options)
+              : editMessageSafe(response.text);
 
             return editEffect.pipe(
               Effect.catchAll(() =>
                 Effect.promise(() =>
-                  options ? ctx.reply(finalText, options) : ctx.reply(finalText)
+                  ctx.reply(response.text, {
+                    parse_mode: response.parseMode,
+                    reply_markup: response.replyMarkup,
+                  })
                 ).pipe(
                   Effect.catchAll((fallbackError) =>
                     Effect.sync(() =>
@@ -243,34 +347,35 @@ const makeTelegramClient = (config: BotConfig) =>
             }
 
             // Handle different response types from AI SDK v5
-            let responseText = result.text?.trim() || "";
-            let useMarkdown = false;
+            const baseText = result.text?.trim() || "";
+            let aggregatedResponse: AggregatedToolResponse | undefined;
 
-            // If no direct text but we have tool results, generate response from them
-            if (
-              !responseText &&
-              result.toolResults &&
-              result.toolResults.length > 0
-            ) {
+            if (result.toolResults && result.toolResults.length > 0) {
               console.log("🔧 Processing tool results to generate response...");
-              responseText = yield* generateResponseFromToolResults(
+              aggregatedResponse = yield* generateResponseFromToolResults(
                 result.toolResults,
                 toolFormatters
               );
-              useMarkdown = true;
             }
 
-            // Final fallback
-            if (!responseText) {
-              responseText = "❌ Извините, не удалось сформировать ответ.";
-            }
+            const finalText = (
+              aggregatedResponse?.text || baseText
+            )?.trim() ||
+              "❌ Извините, не удалось сформировать ответ.";
 
-            console.log("📝 Final response text:", responseText);
+            const finalResponse: AggregatedToolResponse = {
+              text: finalText,
+              parseMode: aggregatedResponse?.parseMode,
+              replyMarkup: aggregatedResponse?.replyMarkup,
+              metadata: aggregatedResponse?.metadata,
+            };
+
+            console.log("📝 Final response text:", finalText);
 
             // Add AI response to history
-            yield* messageHistory.addAssistantMessage(chatId, responseText);
+            yield* messageHistory.addAssistantMessage(chatId, finalText);
 
-            yield* finalizeMessage(responseText, useMarkdown);
+            yield* finalizeMessage(finalResponse);
           }).pipe(
             Effect.catchAll((error) => {
               console.error("AI processing error:", error);

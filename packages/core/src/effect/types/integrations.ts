@@ -1,5 +1,6 @@
 import { Schema } from "@effect/schema";
 import { Data, Effect } from "effect";
+import type { InlineKeyboardMarkup } from "grammy/types";
 
 // Базовые типы
 export const InteractionType = Schema.Literal(
@@ -79,6 +80,13 @@ export class FormatError extends Data.TaggedError("FormatError")<{
   readonly cause?: unknown;
 }> {}
 
+export interface ToolFormatterResult {
+  readonly text: string;
+  readonly parseMode?: "Markdown" | "HTML";
+  readonly replyMarkup?: InlineKeyboardMarkup;
+  readonly metadata?: Record<string, unknown>;
+}
+
 export type ToolResultFormatter = (
   output: unknown
-) => Effect.Effect<string, never>;
+) => Effect.Effect<ToolFormatterResult, never>;

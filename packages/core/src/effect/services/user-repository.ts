@@ -2,6 +2,7 @@ import { Effect, Context, Layer, Option } from "effect"
 import { eq, and } from 'drizzle-orm'
 import { db } from '../../storage/database/client'
 import { users, userIntegrations } from '../../storage/database/schema'
+import { DigestSettingsRepository } from './digest-settings'
 import { EncryptionService, type EncryptedData } from './encryption'
 import {
   type User,
@@ -53,7 +54,8 @@ export interface UserRepository {
 export const UserRepository = Context.GenericTag<UserRepository>("UserRepository")
 
 const makeUserRepository = Effect.gen(function* () {
-  const encryption = yield* EncryptionService
+  const encryption = yield* EncryptionService;
+  const digestSettings = yield* DigestSettingsRepository;
 
   const createUser = (user: NewUser): Effect.Effect<User, DatabaseError> =>
     Effect.tryPromise({
@@ -71,6 +73,11 @@ const makeUserRepository = Effect.gen(function* () {
           try: () => user as User,
           catch: (error) => new DatabaseError('Invalid user data returned from database', error)
         })
+      ),
+      Effect.tap((createdUser) =>
+        digestSettings.ensureDefaultSettings(createdUser.telegramId).pipe(
+          Effect.catchAll(() => Effect.void)
+        )
       )
     )
 
@@ -99,6 +106,10 @@ const makeUserRepository = Effect.gen(function* () {
         if (Option.isSome(userOption)) {
           const user = userOption.value
           // Update username if changed
+          const ensureDefaults = digestSettings
+            .ensureDefaultSettings(user.telegramId)
+            .pipe(Effect.catchAll(() => Effect.void));
+
           if (username && user.username !== username) {
             return Effect.tryPromise({
               try: async () => {
@@ -118,10 +129,13 @@ const makeUserRepository = Effect.gen(function* () {
                   try: () => user as User,
                   catch: (error) => new DatabaseError('Invalid user data returned from database', error)
                 })
-              )
+              ),
+              Effect.tap((updated) => ensureDefaults)
             )
           } else {
-            return Effect.succeed(user)
+            return Effect.succeed(user).pipe(
+              Effect.tap(() => ensureDefaults)
+            )
           }
         } else {
           return createUser({ telegramId, username })

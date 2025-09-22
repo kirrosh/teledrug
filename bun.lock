@@ -5,7 +5,8 @@
       "name": "teledrug",
       "devDependencies": {
         "@types/bun": "latest",
-        "typescript": "^5",
+        "drizzle-kit": "^0.31.4",
+        "typescript": "5.9.2",
       },
     },
     "apps/bot": {
@@ -40,6 +41,7 @@
       },
       "devDependencies": {
         "drizzle-kit": "^0.31.4",
+        "typescript": "5.9.2",
       },
     },
   },

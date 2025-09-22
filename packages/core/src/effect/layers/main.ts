@@ -8,6 +8,9 @@ import { UserRepositoryLive } from "../services/user-repository";
 import { UserConfigStorageLive } from "../services/user-config-storage";
 import { AIAgentFactoryLive } from "../services/ai-agent";
 import { IntegrationRegistryLive } from "../services/integration-registry";
+import { DigestSettingsRepositoryLive } from "../services/digest-settings";
+import { JournalAnalysisServiceLive } from "../services/journal-analysis";
+import { JournalRepositoryLive } from "../services/journal-repository";
 import type { BotConfig } from "../types";
 
 // Create main application layer
@@ -18,11 +21,16 @@ export const createMainLayer = (
   const cryptography = CryptographyServiceLive;
   const encryption = EncryptionServiceLive;
   const messageHistory = MessageHistoryLive;
+  const journalAnalysis = JournalAnalysisServiceLive;
+  const journalRepository = JournalRepositoryLive;
 
   // Level 1: UserRepository требует EncryptionService
+  const digestSettings = DigestSettingsRepositoryLive;
+
   const userRepository = pipe(
     UserRepositoryLive,
-    Layer.provide(encryption)  // ✅ Явно предоставляем зависимость
+    Layer.provide(encryption),
+    Layer.provide(digestSettings)
   );
 
   // Level 2: UserConfigStorage требует UserRepository
@@ -34,7 +42,10 @@ export const createMainLayer = (
   // Level 2: IntegrationRegistry требует UserRepository
   const integrationRegistry = pipe(
     IntegrationRegistryLive,
-    Layer.provide(userRepository) // ✅ Предоставляем доступ к данным пользователя
+    Layer.provide(digestSettings),
+    Layer.provide(userRepository),
+    Layer.provide(journalAnalysis),
+    Layer.provide(journalRepository)
   );
 
   // Level 1: AIAgent требует IntegrationRegistry
@@ -57,7 +68,8 @@ export const createMainLayer = (
         aiAgent,              // Уже включает integrationRegistry
         messageHistory,
         cryptography,
-        integrationRegistry   // ✅ Явно добавляем для TelegramClient
+        integrationRegistry,  // ✅ Явно добавляем для TelegramClient
+        journalRepository
       )
     )
   );
@@ -69,10 +81,13 @@ export const createMainLayer = (
     cryptography,
     encryption,
     messageHistory,
+    journalAnalysis,
+    journalRepository,
     integrationRegistry,
 
     // Сервисы с разрешенными зависимостями
-    userRepository,     // Уже имеет encryption
+    digestSettings,
+    userRepository,     // Уже имеет encryption и digest settings
     userConfig,         // Уже имеет userRepository
     aiAgent,           // Уже имеет integrationRegistry
     telegram           // Уже имеет все необходимое
