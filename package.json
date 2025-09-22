@@ -13,6 +13,7 @@
     "typescript": "5.9.2"
   },
   "scripts": {
+    "prebuild": "bun run db:migrate",
     "build": "bun run --filter @teledrug/core build && bun run --filter @teledrug/bot build && bun run --filter @teledrug/daily-greeting build",
     "bot:dev": "bun run --filter @teledrug/bot dev",
     "bot:start": "bun run --filter @teledrug/bot start",
