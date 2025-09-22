@@ -15,6 +15,13 @@
       "when": 1758320400000,
       "tag": "0001_add_digest_modules",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1758531099262,
+      "tag": "0002_spicy_arclight",
+      "breakpoints": true
     }
   ]
 }

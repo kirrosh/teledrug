@@ -57,6 +57,61 @@ export const UserConfigSchema = Schema.Struct({
   preferences: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
 })
 
+export const JournalMoodSchema = Schema.Literal(
+  "very_negative",
+  "negative",
+  "neutral",
+  "positive",
+  "very_positive",
+  "mixed"
+)
+
+export const JournalEnergySchema = Schema.Literal(
+  "very_low",
+  "low",
+  "medium",
+  "high",
+  "very_high"
+)
+
+export const JournalEntrySchema = Schema.Struct({
+  id: Schema.Number,
+  userId: Schema.Number,
+  entryDate: Schema.Date,
+  title: Schema.String,
+  content: Schema.String,
+  mood: JournalMoodSchema,
+  energy: JournalEnergySchema,
+  tags: Schema.Array(Schema.String),
+  aiMetadata: Schema.optional(Schema.Unknown),
+  createdAt: Schema.Date,
+  updatedAt: Schema.Date,
+})
+
+export const NewJournalEntrySchema = Schema.Struct({
+  userId: Schema.Number,
+  entryDate: Schema.optional(Schema.Date),
+  title: Schema.String,
+  content: Schema.String,
+  mood: JournalMoodSchema,
+  energy: JournalEnergySchema,
+  tags: Schema.optional(Schema.Array(Schema.String)),
+  aiMetadata: Schema.optional(Schema.Unknown),
+})
+
+export const JournalTagSchema = Schema.Struct({
+  id: Schema.Number,
+  userId: Schema.Number,
+  name: Schema.String,
+  createdAt: Schema.Date,
+  updatedAt: Schema.Date,
+})
+
+export const NewJournalTagSchema = Schema.Struct({
+  userId: Schema.Number,
+  name: Schema.String,
+})
+
 // Infer types
 export type User = Schema.Schema.Type<typeof UserSchema>
 export type NewUser = Schema.Schema.Type<typeof NewUserSchema>
@@ -64,3 +119,9 @@ export type UserIntegration = Schema.Schema.Type<typeof UserIntegrationSchema>
 export type NewUserIntegration = Schema.Schema.Type<typeof NewUserIntegrationSchema>
 export type UserIntegrationConfig = Schema.Schema.Type<typeof UserIntegrationConfigSchema>
 export type UserConfig = Schema.Schema.Type<typeof UserConfigSchema>
+export type JournalEntry = Schema.Schema.Type<typeof JournalEntrySchema>
+export type NewJournalEntry = Schema.Schema.Type<typeof NewJournalEntrySchema>
+export type JournalTag = Schema.Schema.Type<typeof JournalTagSchema>
+export type NewJournalTag = Schema.Schema.Type<typeof NewJournalTagSchema>
+export type JournalMood = Schema.Schema.Type<typeof JournalMoodSchema>
+export type JournalEnergy = Schema.Schema.Type<typeof JournalEnergySchema>

@@ -588,13 +588,17 @@ const formatGetEventsResult: ToolResultFormatter = (output) =>
   Schema.decodeUnknown(GetEventsResultSchema)(output).pipe(
     Effect.map((result) => {
       if (!result.success) {
-        return result.message
+        const text = result.message
           ? `❌ ${escapeMarkdown(result.message)}`
           : "❌ Не удалось получить события календаря."
+        return { text, parseMode: "Markdown" as const }
       }
 
       if (!result.events || result.events.length === 0) {
-        return "📅 У вас нет событий на выбранный период."
+        return {
+          text: "📅 У вас нет событий на выбранный период.",
+          parseMode: "Markdown" as const,
+        }
       }
 
       const formattedEvents = result.events
@@ -611,10 +615,13 @@ const formatGetEventsResult: ToolResultFormatter = (output) =>
         response += `\nℹ️ ${escapeMarkdown(result.message)}`
       }
 
-      return response
+      return { text: response, parseMode: "Markdown" as const }
     }),
     Effect.catchAll(() =>
-      Effect.succeed("❌ Не удалось обработать результат инструмента календаря.")
+      Effect.succeed({
+        text: "❌ Не удалось обработать результат инструмента календаря.",
+        parseMode: "Markdown" as const,
+      })
     )
   )
 
@@ -622,15 +629,17 @@ const formatCreateEventResult: ToolResultFormatter = (output) =>
   Schema.decodeUnknown(CreateEventResultSchema)(output).pipe(
     Effect.map((result) => {
       if (!result.success) {
-        return result.error
+        const text = result.error
           ? `❌ ${escapeMarkdown(result.error)}`
           : "❌ Не удалось создать событие."
+        return { text, parseMode: "Markdown" as const }
       }
 
       if (!result.event) {
-        return result.message
+        const text = result.message
           ? `✅ ${escapeMarkdown(result.message)}`
           : "✅ Событие создано."
+        return { text, parseMode: "Markdown" as const }
       }
 
       const start = new Date(result.event.startDate)
@@ -683,10 +692,16 @@ const formatCreateEventResult: ToolResultFormatter = (output) =>
         response += `ℹ️ ${message}`
       }
 
-      return response.trim()
+      return {
+        text: response.trim(),
+        parseMode: "Markdown" as const,
+      }
     }),
     Effect.catchAll(() =>
-      Effect.succeed("❌ Не удалось обработать результат создания события.")
+      Effect.succeed({
+        text: "❌ Не удалось обработать результат создания события.",
+        parseMode: "Markdown" as const,
+      })
     )
   )
 

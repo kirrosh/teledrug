@@ -12,6 +12,9 @@ import {
 import { UserRepository } from "./user-repository";
 import { createDigestTools } from "../digest/tools";
 import { DigestSettingsRepository } from "./digest-settings";
+import { createJournalTools } from "../journal/tools";
+import { JournalAnalysisService } from "./journal-analysis";
+import { JournalRepository } from "./journal-repository";
 
 export interface IntegrationToolsBundle {
   readonly tools: Record<string, AITool>;
@@ -48,6 +51,8 @@ const toNumericUserId = (userId: string | number) => {
 const makeIntegrationRegistry = Effect.gen(function* () {
   const userRepository = yield* UserRepository;
   const digestSettings = yield* DigestSettingsRepository;
+  const journalAnalysis = yield* JournalAnalysisService;
+  const journalRepository = yield* JournalRepository;
 
   yield* Console.log("🔧 Initializing Integration Registry...");
 
@@ -80,6 +85,18 @@ const makeIntegrationRegistry = Effect.gen(function* () {
         )
       );
 
+      const journalToolsBundle = yield* createJournalTools(numericUserId).pipe(
+        Effect.provideService(JournalAnalysisService, journalAnalysis),
+        Effect.provideService(JournalRepository, journalRepository),
+        Effect.mapError(
+          (cause) =>
+            new IntegrationError({
+              message: "Failed to prepare journal tools",
+              cause,
+            })
+        )
+      );
+
       const integrations = yield* userRepository
         .getAllDecryptedIntegrations(numericUserId)
         .pipe(
@@ -92,12 +109,17 @@ const makeIntegrationRegistry = Effect.gen(function* () {
           )
         );
 
-      const tools: Record<string, AITool> = { ...digestToolsBundle.tools };
+      const tools: Record<string, AITool> = {
+        ...digestToolsBundle.tools,
+        ...journalToolsBundle.tools,
+      };
       const formatters: Record<string, ToolResultFormatter> = {
         ...digestToolsBundle.formatters,
+        ...journalToolsBundle.formatters,
       };
       const progressMessages: Record<string, string> = {
         ...digestToolsBundle.progressMessages,
+        ...journalToolsBundle.progressMessages,
       };
 
       if (integrations.length === 0) {
