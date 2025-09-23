@@ -5,6 +5,9 @@ import { JournalAnalysisService } from "../services/journal-analysis";
 import { JournalRepository } from "../services/journal-repository";
 import { energyEmojiMap, moodEmojiMap } from "./model";
 import type { ToolResultFormatter } from "../types/integrations";
+import { generateText } from "ai";
+import { openai } from "@ai-sdk/openai";
+import { TaskRepository } from "../services/task-repository";
 
 const CreateJournalEntrySchema = z.object({
   content: z.string().min(1, "Текст записи не может быть пустым"),
@@ -12,7 +15,6 @@ const CreateJournalEntrySchema = z.object({
   tags: z.array(z.string().min(1).max(32)).max(10).optional(),
 });
 
-type CreateJournalEntryInput = z.infer<typeof CreateJournalEntrySchema>;
 
 const parseOptionalDate = (value: string | undefined): Date | undefined => {
   if (!value) {
@@ -61,6 +63,8 @@ export interface CreateJournalEntryResult {
   readonly energyEmoji: string;
   readonly entryDate: string;
   readonly tags: ReadonlyArray<string>;
+  readonly suggestions?: ReadonlyArray<{ title: string; dueAt?: string | null }>;
+  readonly completeSuggestions?: ReadonlyArray<{ title: string }>;
 }
 
 const escapeMarkdown = (value: string): string =>
@@ -104,7 +108,42 @@ const formatCreateJournalEntryResult: ToolResultFormatter = (output) =>
           .join(" ")}`
       : "";
 
-    const text = `${data.moodEmoji} ${data.energyEmoji} *${escapeMarkdown(data.title)}*\n_${escapeMarkdown(dateLabel)}_\n\n${body}${tagsLine}`;
+    const suggestions = Array.isArray((data as any).suggestions)
+      ? ((data as any).suggestions as ReadonlyArray<{ title: string; dueAt?: string | null }>)
+      : [];
+    const completeSuggestions = Array.isArray((data as any).completeSuggestions)
+      ? ((data as any).completeSuggestions as ReadonlyArray<{ title: string }>)
+      : [];
+
+    const suggestionLines = suggestions.length
+      ? `\n\n🧩 Предложения задач:\n${suggestions
+          .slice(0, 5)
+          .map((s) => `• ${escapeMarkdown(s.title)}${s.dueAt ? ` — до ${escapeMarkdown(new Date(s.dueAt).toLocaleDateString("ru-RU"))}` : ""}`)
+          .join("\n")}\n\nСкажи: "Создай задачу: <текст>" или используй инструмент.`
+      : "";
+    const completeLines = completeSuggestions.length
+      ? `\n\n✅ Возможно выполнено:\n${completeSuggestions.map((c) => `• ${escapeMarkdown(c.title)}`).join("\n")}`
+      : "";
+
+    const text = `${data.moodEmoji} ${data.energyEmoji} *${escapeMarkdown(data.title)}*\n_${escapeMarkdown(dateLabel)}_\n\n${body}${tagsLine}${suggestionLines}${completeLines}`;
+
+    // Inline buttons: optional quick-create for a single suggestion, and delete
+    const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
+    if (suggestions.length === 1) {
+      const encodedTitle = encodeURIComponent(suggestions[0].title).slice(0, 30);
+      buttons.push([
+        {
+          text: "➕ Создать задачу",
+          callback_data: `journal:createTask:${data.entryId}:${encodedTitle}`,
+        },
+      ]);
+    }
+    buttons.push([
+      {
+        text: "🗑 Удалить",
+        callback_data: `journal:delete:${data.entryId}`,
+      },
+    ]);
 
     return {
       text,
@@ -113,14 +152,7 @@ const formatCreateJournalEntryResult: ToolResultFormatter = (output) =>
         entryId: data.entryId,
       },
       replyMarkup: {
-        inline_keyboard: [
-          [
-            {
-              text: "🗑 Удалить",
-              callback_data: `journal:delete:${data.entryId}`,
-            },
-          ],
-        ],
+        inline_keyboard: buttons,
       },
     };
   });
@@ -129,6 +161,28 @@ export const createJournalTools = (userId: number) =>
   Effect.gen(function* () {
     const analysisService = yield* JournalAnalysisService;
     const repository = yield* JournalRepository;
+    const tasksRepo = yield* TaskRepository;
+
+    const model = openai("gpt-5-nano");
+
+    const extractTasksAI = (content: string, existingTasks: ReadonlyArray<{ id: number; title: string }>) =>
+      Effect.tryPromise(async () => {
+        const existing = existingTasks.map((t) => `- ${t.title}`).join("\n");
+        const system = `Ты помощник по планированию. На входе — текст дневниковой записи пользователя и список его актуальных задач. Твоя задача — предложить, какие задачи стоит создать по записи, а какие из существующих вероятно можно отметить как выполненные. Верни ТОЛЬКО JSON формата:\n{"create": [{"title": string, "dueAt": string|null}], "complete": [{"title": string}]}\nГде dueAt — ISO‑дата или null, только если в тексте явно прослеживается срок (сегодня/завтра/конкретная дата/время). Если не уверены — dueAt = null. Не дублируй существующие задачи из списка, если совпадает формулировка.`;
+        const user = `Запись:\n"""\n${content}\n"""\n\nАктуальные задачи:\n${existing || "(нет)"}`;
+        const resp = await generateText({ model, messages: [ { role: "system", content: system }, { role: "user", content: user } ], temperature: 0 });
+        const text = resp.text.trim();
+        const clean = text.startsWith("```") ? text.replace(/^[`]{3}[a-zA-Z]*\n?/, "").replace(/```$/, "").trim() : text;
+        const parsed = JSON.parse(clean) as { create?: Array<{ title: string; dueAt?: string | null }>; complete?: Array<{ title: string }> };
+        return {
+          create: Array.isArray(parsed.create) ? parsed.create.filter((t) => typeof t.title === "string" && t.title.trim().length > 0).slice(0, 5) : [],
+          complete: Array.isArray(parsed.complete) ? parsed.complete.filter((t) => typeof t.title === "string" && t.title.trim().length > 0).slice(0, 5) : [],
+        };
+      }).pipe(
+        Effect.catchAll(() => Effect.succeed({ create: [], complete: [] }))
+      );
+
+    // (Heuristic extractor removed; using AI-based extractor above)
 
     const createEntryTool = tool({
       description:
@@ -166,6 +220,18 @@ export const createJournalTools = (userId: number) =>
             ? new Date().toISOString()
             : entryDateValue.toISOString();
 
+          const existingOpen = yield* tasksRepo.listOpen(userId, 20).pipe(
+            Effect.catchAll(() => Effect.succeed([]))
+          );
+          const ai = yield* extractTasksAI(
+            content,
+            existingOpen.map((t) => ({ id: t.id, title: t.title }))
+          );
+          const suggestions = ai.create.map((s) => ({
+            title: s.title.trim(),
+            dueAt: s.dueAt && s.dueAt.trim().length > 0 ? new Date(s.dueAt).toISOString() : null,
+          }));
+
           const data: CreateJournalEntryResult = {
             entryId: entry.id,
             title: entry.title,
@@ -176,6 +242,8 @@ export const createJournalTools = (userId: number) =>
             energyEmoji: energyEmojiMap[entry.energy],
             entryDate,
             tags: entry.tags,
+            suggestions,
+            completeSuggestions: ai.complete.map((c) => ({ title: c.title.trim() })),
           };
 
           return {

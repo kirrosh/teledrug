@@ -7,7 +7,7 @@ import {
 } from "../../storage/database/schema";
 import { and, eq } from "drizzle-orm";
 
-export type DigestModuleId = "weather" | "fx" | "calendar";
+export type DigestModuleId = "weather" | "fx" | "calendar" | "tasks";
 
 export interface ModuleSettingEntry {
   readonly module: DigestModuleId;
@@ -63,6 +63,12 @@ const DEFAULT_MODULES: ReadonlyArray<{
     description: "Calendar events digest",
     enabled: true,
     settings: null,
+  },
+  {
+    module: "tasks",
+    description: "Tasks summary for today",
+    enabled: true,
+    settings: { limit: 3 },
   },
 ];
 

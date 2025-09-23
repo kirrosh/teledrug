@@ -18,6 +18,7 @@
     "bot:dev": "bun run --filter @teledrug/bot dev",
     "bot:start": "bun run --filter @teledrug/bot start",
     "digest:send": "bun run --filter @teledrug/daily-greeting start",
+    "digest:evening": "bun run --filter @teledrug/daily-greeting start:evening",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "db:studio": "drizzle-kit studio --config drizzle.config.ts"

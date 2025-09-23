@@ -1,12 +1,13 @@
 import { Effect } from "effect";
 import type { DigestModuleImpl, DigestModuleResult } from "./types";
-import { WeatherDigestModule, FxDigestModule, CalendarDigestModule } from "./modules";
+import { WeatherDigestModule, FxDigestModule, CalendarDigestModule, TasksDigestModule } from "./modules";
 import { DigestSettingsRepository } from "../services/digest-settings";
 
 const MODULES: ReadonlyArray<DigestModuleImpl> = [
   WeatherDigestModule,
   FxDigestModule,
   CalendarDigestModule,
+  TasksDigestModule,
 ];
 
 export const runDailyDigest = (

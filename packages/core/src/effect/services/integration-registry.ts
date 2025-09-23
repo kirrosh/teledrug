@@ -15,6 +15,8 @@ import { DigestSettingsRepository } from "./digest-settings";
 import { createJournalTools } from "../journal/tools";
 import { JournalAnalysisService } from "./journal-analysis";
 import { JournalRepository } from "./journal-repository";
+import { createTaskTools } from "../tasks/tools";
+import { TaskRepository, TaskRepositoryLive } from "./task-repository";
 
 export interface IntegrationToolsBundle {
   readonly tools: Record<string, AITool>;
@@ -53,6 +55,7 @@ const makeIntegrationRegistry = Effect.gen(function* () {
   const digestSettings = yield* DigestSettingsRepository;
   const journalAnalysis = yield* JournalAnalysisService;
   const journalRepository = yield* JournalRepository;
+  // TaskRepository is lightweight; we'll provide its live layer on demand
 
   yield* Console.log("🔧 Initializing Integration Registry...");
 
@@ -88,10 +91,22 @@ const makeIntegrationRegistry = Effect.gen(function* () {
       const journalToolsBundle = yield* createJournalTools(numericUserId).pipe(
         Effect.provideService(JournalAnalysisService, journalAnalysis),
         Effect.provideService(JournalRepository, journalRepository),
+        Effect.provide(TaskRepositoryLive),
         Effect.mapError(
           (cause) =>
             new IntegrationError({
               message: "Failed to prepare journal tools",
+              cause,
+            })
+        )
+      );
+
+      const taskToolsBundle = yield* createTaskTools(numericUserId).pipe(
+        Effect.provide(TaskRepositoryLive),
+        Effect.mapError(
+          (cause) =>
+            new IntegrationError({
+              message: "Failed to prepare task tools",
               cause,
             })
         )
@@ -112,14 +127,17 @@ const makeIntegrationRegistry = Effect.gen(function* () {
       const tools: Record<string, AITool> = {
         ...digestToolsBundle.tools,
         ...journalToolsBundle.tools,
+        ...taskToolsBundle.tools,
       };
       const formatters: Record<string, ToolResultFormatter> = {
         ...digestToolsBundle.formatters,
         ...journalToolsBundle.formatters,
+        ...taskToolsBundle.formatters,
       };
       const progressMessages: Record<string, string> = {
         ...digestToolsBundle.progressMessages,
         ...journalToolsBundle.progressMessages,
+        ...taskToolsBundle.progressMessages,
       };
 
       if (integrations.length === 0) {

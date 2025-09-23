@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "start": "bun run src/index.ts",
+    "start:evening": "bun run src/evening.ts",
     "build": "bun build src/index.ts --outdir dist --target bun"
   },
   "dependencies": {

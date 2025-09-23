@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import type { ModuleSettingEntry } from "../services/digest-settings";
 
-export type DigestModuleId = "weather" | "fx" | "calendar";
+export type DigestModuleId = "weather" | "fx" | "calendar" | "tasks";
 
 export interface DigestModuleContext {
   readonly userId: number;

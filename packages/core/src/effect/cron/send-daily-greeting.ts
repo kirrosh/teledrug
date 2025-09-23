@@ -5,6 +5,7 @@ import { DigestSettingsRepositoryLive } from "../services/digest-settings";
 import { UserRepositoryLive } from "../services/user-repository";
 import { EncryptionServiceLive } from "../services/encryption";
 import { runDailyDigest } from "../digest/runner";
+import { TaskRepositoryLive } from "../services/task-repository";
 
 const greetingPrefix = "🌞 Доброе утро!";
 
@@ -77,7 +78,7 @@ const userRepositoryLayer = pipe(
   Layer.provide(digestLayer)
 );
 
-const servicesLayer = Layer.mergeAll(digestLayer, userRepositoryLayer);
+const servicesLayer = Layer.mergeAll(digestLayer, userRepositoryLayer, TaskRepositoryLive);
 
 const program = Effect.gen(function* () {
   const token = process.env.TELEGRAM_BOT_TOKEN;

@@ -11,6 +11,7 @@ import { IntegrationRegistryLive } from "../services/integration-registry";
 import { DigestSettingsRepositoryLive } from "../services/digest-settings";
 import { JournalAnalysisServiceLive } from "../services/journal-analysis";
 import { JournalRepositoryLive } from "../services/journal-repository";
+import { TaskRepositoryLive } from "../services/task-repository";
 import type { BotConfig } from "../types";
 
 // Create main application layer
@@ -23,6 +24,7 @@ export const createMainLayer = (
   const messageHistory = MessageHistoryLive;
   const journalAnalysis = JournalAnalysisServiceLive;
   const journalRepository = JournalRepositoryLive;
+  const taskRepository = TaskRepositoryLive;
 
   // Level 1: UserRepository требует EncryptionService
   const digestSettings = DigestSettingsRepositoryLive;
@@ -45,7 +47,8 @@ export const createMainLayer = (
     Layer.provide(digestSettings),
     Layer.provide(userRepository),
     Layer.provide(journalAnalysis),
-    Layer.provide(journalRepository)
+    Layer.provide(journalRepository),
+    Layer.provide(taskRepository)
   );
 
   // Level 1: AIAgent требует IntegrationRegistry
@@ -69,7 +72,8 @@ export const createMainLayer = (
         messageHistory,
         cryptography,
         integrationRegistry,  // ✅ Явно добавляем для TelegramClient
-        journalRepository
+        journalRepository,
+        taskRepository
       )
     )
   );

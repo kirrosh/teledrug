@@ -10,7 +10,7 @@ const UpdateDigestSettingsSchema = z.object({
     "update_weather",
     "update_fx",
   ]),
-  module: z.enum(["weather", "fx", "calendar"]).optional(),
+  module: z.enum(["weather", "fx", "calendar", "tasks"]).optional(),
   enabled: z.boolean().optional(),
   weather: z
     .object({
