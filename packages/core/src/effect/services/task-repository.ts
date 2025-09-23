@@ -1,5 +1,5 @@
 import { Effect, Context, Layer, Data } from "effect";
-import { and, or, eq, gte, lte, isNull } from "drizzle-orm";
+import { and, or, eq, gte, lte, isNull, ilike } from "drizzle-orm";
 import { tasks, type Task, type NewTask } from "../../storage/database/schema";
 import { db } from "../../storage/database/client";
 
@@ -20,6 +20,18 @@ export interface TaskRepository {
   readonly listForToday: (userId: number, limit?: number) => Effect.Effect<ReadonlyArray<Task>, TaskRepositoryError>;
   readonly countOverdue: (userId: number, now?: Date) => Effect.Effect<number, TaskRepositoryError>;
   readonly listOpen: (userId: number, limit?: number) => Effect.Effect<ReadonlyArray<Task>, TaskRepositoryError>;
+  readonly delete: (taskId: number, userId: number) => Effect.Effect<boolean, TaskRepositoryError>;
+  readonly update: (
+    taskId: number,
+    userId: number,
+    patch: { readonly title?: string; readonly dueAt?: Date | null; readonly status?: string }
+  ) => Effect.Effect<Task, TaskRepositoryError>;
+  readonly findById: (taskId: number, userId: number) => Effect.Effect<Task | null, TaskRepositoryError>;
+  readonly findByTitleLike: (
+    userId: number,
+    query: string,
+    limit?: number
+  ) => Effect.Effect<ReadonlyArray<Task>, TaskRepositoryError>;
 }
 
 export const TaskRepository = Context.GenericTag<TaskRepository>("@services/TaskRepository");
@@ -37,6 +49,14 @@ const endOfDay = (date: Date) => {
   d.setHours(23, 59, 59, 999);
   return d;
 };
+
+interface ResolveInput {
+  readonly id?: number;
+  readonly titleLike?: string;
+}
+
+const normalizeTitle = (value: string | undefined | null) =>
+  value ? value.trim() : undefined;
 
 const makeTaskRepository = Effect.sync(() => {
   const create: TaskRepository["create"] = (input) =>
@@ -131,7 +151,94 @@ const makeTaskRepository = Effect.sync(() => {
       catch: (cause) => new TaskRepositoryError({ message: "Не удалось получить список задач", cause }),
     });
 
-  return TaskRepository.of({ create, complete, listForToday, countOverdue, listOpen });
+  const deleteTask: TaskRepository["delete"] = (taskId, userId) =>
+    Effect.tryPromise({
+      try: async () => {
+        const [row] = await db
+          .delete(tasks)
+          .where(and(eq(tasks.id, taskId), eq(tasks.userId, userId)))
+          .returning({ id: tasks.id });
+        return Boolean(row);
+      },
+      catch: (cause) => new TaskRepositoryError({ message: "Не удалось удалить задачу", cause }),
+    });
+
+  const updateTask: TaskRepository["update"] = (taskId, userId, patch) =>
+    Effect.tryPromise({
+      try: async () => {
+        const updates: Partial<Task> = {
+          updatedAt: new Date(),
+        };
+
+        const title = normalizeTitle(patch.title);
+        if (title !== undefined) {
+          updates.title = title;
+        }
+
+        if (patch.dueAt !== undefined) {
+          updates.dueAt = patch.dueAt;
+        }
+
+        if (patch.status !== undefined) {
+          updates.status = patch.status;
+        }
+
+        const [row] = await db
+          .update(tasks)
+          .set(updates)
+          .where(and(eq(tasks.id, taskId), eq(tasks.userId, userId)))
+          .returning();
+
+        if (!row) {
+          throw new Error("Task not found");
+        }
+
+        return row as Task;
+      },
+      catch: (cause) => new TaskRepositoryError({ message: "Не удалось обновить задачу", cause }),
+    });
+
+  const findById: TaskRepository["findById"] = (taskId, userId) =>
+    Effect.tryPromise({
+      try: async () => {
+        const [row] = await db
+          .select()
+          .from(tasks)
+          .where(and(eq(tasks.id, taskId), eq(tasks.userId, userId)))
+          .limit(1);
+        return row ?? null;
+      },
+      catch: (cause) => new TaskRepositoryError({ message: "Не удалось получить задачу", cause }),
+    });
+
+  const findByTitleLike: TaskRepository["findByTitleLike"] = (userId, query, limit = 5) =>
+    Effect.tryPromise({
+      try: async () => {
+        const pattern = `%${query.replace(/%/g, "\\%")}%`;
+        const rows = await db
+          .select()
+          .from(tasks)
+          .where(and(eq(tasks.userId, userId), ilike(tasks.title, pattern)))
+          .orderBy(tasks.dueAt, tasks.title)
+          .limit(limit);
+        return rows;
+      },
+      catch: (cause) => new TaskRepositoryError({ message: "Не удалось найти задачи", cause }),
+    });
+
+  const repo = TaskRepository.of({
+    create,
+    complete,
+    listForToday,
+    countOverdue,
+    listOpen,
+    delete: deleteTask,
+    update: updateTask,
+    findById,
+    findByTitleLike,
+  });
+
+  return repo;
 });
 
 export const TaskRepositoryLive = Layer.effect(TaskRepository, makeTaskRepository);
