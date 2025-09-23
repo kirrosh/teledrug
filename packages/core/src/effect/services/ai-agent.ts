@@ -154,14 +154,13 @@ const makeAIAgent = (config: AIAgentConfig) =>
           );
 
           // Call OpenAI API with tools - they execute automatically in AI SDK v5
+          const hasTools = Object.keys(userTools.tools).length > 0;
           const result = yield* Effect.promise(() =>
             generateText({
               model,
               messages,
-              tools:
-                Object.keys(userTools.tools).length > 0
-                  ? userTools.tools
-                  : undefined,
+              tools: hasTools ? userTools.tools : undefined,
+              toolChoice: hasTools ? "required" : undefined,
             })
           );
 

@@ -14,7 +14,10 @@ const ANALYSIS_PROMPT = `Ты помощник, который анализир�
 const stripCodeFences = (text: string) => {
   const trimmed = text.trim();
   if (trimmed.startsWith("```")) {
-    return trimmed.replace(/^[`]{3}[a-zA-Z]*\n?/, "").replace(/```$/, "").trim();
+    return trimmed
+      .replace(/^[`]{3}[a-zA-Z]*\n?/, "")
+      .replace(/```$/, "")
+      .trim();
   }
   if (trimmed.startsWith("`")) {
     return trimmed.replace(/^`+/, "").replace(/`+$/, "").trim();
@@ -27,20 +30,23 @@ const parseJsonSafe = (text: string): unknown => {
   return JSON.parse(stripped);
 };
 
-export class JournalAnalysisError extends Data.TaggedError("JournalAnalysisError")<{
+export class JournalAnalysisError extends Data.TaggedError(
+  "JournalAnalysisError"
+)<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
 
 export interface JournalAnalysisService {
-  readonly analyze: (
-    input: { content: string }
-  ) => Effect.Effect<JournalAnalysisResult, JournalAnalysisError>;
+  readonly analyze: (input: {
+    content: string;
+  }) => Effect.Effect<JournalAnalysisResult, JournalAnalysisError>;
 }
 
-export const JournalAnalysisService = Context.GenericTag<JournalAnalysisService>(
-  "@services/JournalAnalysisService"
-);
+export const JournalAnalysisService =
+  Context.GenericTag<JournalAnalysisService>(
+    "@services/JournalAnalysisService"
+  );
 
 const makeJournalAnalysisService = Effect.gen(function* () {
   const model = openai("gpt-5-nano");
@@ -57,7 +63,6 @@ const makeJournalAnalysisService = Effect.gen(function* () {
               { role: "system", content: ANALYSIS_PROMPT },
               { role: "user", content },
             ],
-            temperature: 0.2,
           }),
         catch: (cause) =>
           new JournalAnalysisError({
@@ -87,9 +92,12 @@ const makeJournalAnalysisService = Effect.gen(function* () {
 
       const rawMood = data.mood;
       const rawEnergy = data.energy;
-      const rawTitle = typeof data.title === "string" ? data.title : fallbackTitle;
+      const rawTitle =
+        typeof data.title === "string" ? data.title : fallbackTitle;
       const rawTags = Array.isArray(data.tags)
-        ? data.tags.filter((value): value is string => typeof value === "string")
+        ? data.tags.filter(
+            (value): value is string => typeof value === "string"
+          )
         : [];
 
       const mood = yield* moodSchema(rawMood).pipe(

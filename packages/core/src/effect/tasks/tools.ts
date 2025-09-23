@@ -7,10 +7,6 @@ import { TaskRepository } from "../services/task-repository";
 const AddTaskSchema = z.object({
   title: z.string().min(1),
   dueAt: z.string().datetime().optional(),
-  description: z.string().optional(),
-  priority: z.number().int().min(1).max(5).optional(),
-  tags: z.array(z.string().min(1).max(32)).max(10).optional(),
-  sourceEntryId: z.number().int().optional(),
 });
 
 const ListTasksSchema = z.object({
@@ -54,15 +50,13 @@ export const createTaskTools = (userId: number) =>
       inputSchema: AddTaskSchema,
       execute: async (raw) => {
         const input = AddTaskSchema.parse(raw);
-        const effect = repo.create({
-          userId,
-          title: input.title,
-          description: input.description,
-          dueAt: input.dueAt ? new Date(input.dueAt) : null,
-          priority: input.priority ?? null,
-          tags: input.tags ?? null,
-          sourceEntryId: input.sourceEntryId ?? null,
-        }).pipe(
+        const effect = repo
+          .create({
+            userId,
+            title: input.title,
+            dueAt: input.dueAt ? new Date(input.dueAt) : null,
+          })
+          .pipe(
           Effect.map((task) => ({ success: true as const, data: { id: task.id, title: task.title } })),
           Effect.catchAll((e) => Effect.succeed({ success: false as const, error: e.message }))
         );
@@ -111,4 +105,3 @@ export const createTaskTools = (userId: number) =>
       },
     } as const;
   });
-

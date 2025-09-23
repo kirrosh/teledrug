@@ -1,11 +1,6 @@
 import { Effect, Context, Layer, Data } from "effect";
 import { and, eq, gte, lte } from "drizzle-orm";
-import {
-  tasks,
-  taskReminders,
-  type Task,
-  type NewTask,
-} from "../../storage/database/schema";
+import { tasks, type Task, type NewTask } from "../../storage/database/schema";
 import { db } from "../../storage/database/client";
 
 export class TaskRepositoryError extends Data.TaggedError("TaskRepositoryError")<{
@@ -16,13 +11,7 @@ export class TaskRepositoryError extends Data.TaggedError("TaskRepositoryError")
 export interface CreateTaskInput {
   readonly userId: number;
   readonly title: string;
-  readonly description?: string;
   readonly dueAt?: Date | null;
-  readonly startAt?: Date | null;
-  readonly durationMin?: number | null;
-  readonly priority?: number | null;
-  readonly tags?: ReadonlyArray<string> | null;
-  readonly sourceEntryId?: number | null;
 }
 
 export interface TaskRepository {
@@ -35,21 +24,7 @@ export interface TaskRepository {
 
 export const TaskRepository = Context.GenericTag<TaskRepository>("@services/TaskRepository");
 
-const normalizeTags = (tags?: ReadonlyArray<string> | null): string[] => {
-  if (!tags || tags.length === 0) return [];
-  const result: string[] = [];
-  const seen = new Set<string>();
-  for (const tag of tags) {
-    const cleaned = tag.replace(/\s+/g, " ").trim();
-    if (!cleaned) continue;
-    const key = cleaned.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(cleaned);
-    if (result.length >= 10) break;
-  }
-  return result;
-};
+// no-op
 
 const startOfDay = (date: Date) => {
   const d = new Date(date);
@@ -70,15 +45,8 @@ const makeTaskRepository = Effect.sync(() => {
         const values: NewTask = {
           userId: input.userId,
           title: input.title.trim(),
-          description: input.description?.trim() || null,
           status: "todo",
           dueAt: input.dueAt ?? null,
-          startAt: input.startAt ?? null,
-          durationMin: input.durationMin ?? null,
-          priority: input.priority ?? null,
-          tags: normalizeTags(input.tags),
-          calendarEventId: null,
-          sourceEntryId: input.sourceEntryId ?? null,
         } as NewTask;
 
         const [row] = await db.insert(tasks).values(values).returning();

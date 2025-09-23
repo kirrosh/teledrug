@@ -184,15 +184,8 @@ export const tasks = pgTable(
       .references(() => users.telegramId, { onDelete: "cascade" })
       .notNull(),
     title: text("title").notNull(),
-    description: text("description"),
     status: varchar("status", { length: 20 }).default("todo").notNull(),
     dueAt: timestamp("due_at"),
-    startAt: timestamp("start_at"),
-    durationMin: integer("duration_min"),
-    priority: integer("priority"),
-    tags: text("tags").array().default(sql`ARRAY[]::text[]`).notNull(),
-    calendarEventId: varchar("calendar_event_id", { length: 255 }),
-    sourceEntryId: integer("source_entry_id"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -202,22 +195,5 @@ export const tasks = pgTable(
   })
 );
 
-export const taskReminders = pgTable(
-  "task_reminders",
-  {
-    id: serial("id").primaryKey(),
-    taskId: integer("task_id")
-      .references(() => tasks.id, { onDelete: "cascade" })
-      .notNull(),
-    remindAt: timestamp("remind_at").notNull(),
-    sentAt: timestamp("sent_at"),
-  },
-  (table) => ({
-    remindAtIdx: index("idx_task_reminders_remind_at").on(table.remindAt),
-  })
-);
-
 export type Task = typeof tasks.$inferSelect;
 export type NewTask = typeof tasks.$inferInsert;
-export type TaskReminder = typeof taskReminders.$inferSelect;
-export type NewTaskReminder = typeof taskReminders.$inferInsert;
