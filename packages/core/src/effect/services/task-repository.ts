@@ -1,5 +1,5 @@
 import { Effect, Context, Layer, Data } from "effect";
-import { and, eq, gte, lte } from "drizzle-orm";
+import { and, or, eq, gte, lte, isNull } from "drizzle-orm";
 import { tasks, type Task, type NewTask } from "../../storage/database/schema";
 import { db } from "../../storage/database/client";
 
@@ -81,8 +81,10 @@ const makeTaskRepository = Effect.sync(() => {
             and(
               eq(tasks.userId, userId),
               eq(tasks.status, "todo"),
-              gte(tasks.dueAt, start),
-              lte(tasks.dueAt, end)
+              or(
+                and(gte(tasks.dueAt, start), lte(tasks.dueAt, end)),
+                isNull(tasks.dueAt)
+              )
             )
           )
           .limit(50);

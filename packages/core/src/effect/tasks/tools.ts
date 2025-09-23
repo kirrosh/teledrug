@@ -76,10 +76,11 @@ export const createTaskTools = (userId: number) =>
             return { success: true as const, items: items.map((t) => ({ id: t.id, title: t.title, dueAt: t.dueAt ? new Date(t.dueAt).toISOString() : null })), scope };
           }
           if (scope === "overdue") {
-            // minimal: reuse listForToday and filter past due; for correctness, fetch all TODO and filter
-            const all = yield* repo.listForToday(userId, 100);
+            const all = yield* repo.listOpen(userId, 200);
             const now = Date.now();
-            const items = all.filter((t) => t.dueAt && new Date(t.dueAt).getTime() < now);
+            const items = all
+              .filter((t) => t.dueAt && new Date(t.dueAt).getTime() < now)
+              .sort((a, b) => new Date(a.dueAt!).getTime() - new Date(b.dueAt!).getTime());
             return { success: true as const, items: items.map((t) => ({ id: t.id, title: t.title, dueAt: t.dueAt ? new Date(t.dueAt).toISOString() : null })), scope };
           }
           // week: for v1 keep it same as today
