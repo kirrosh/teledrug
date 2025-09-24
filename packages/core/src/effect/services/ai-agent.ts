@@ -91,34 +91,39 @@ const domainAgentDefinitions: Record<DomainAgentType, DomainAgentDefinition> = {
   journal: {
     description:
       "Создаёт и анализирует записи дневника, определяет настроение и подсказывает теги.",
-    buildSystemPrompt: (context, toolNames) => {
+    buildSystemPrompt: (context, _toolNames) => {
       const interactionHint = buildInteractionHint(context);
-      const toolList = toolNames.length
-        ? `Доступные инструменты: ${toolNames.join(", ")}.`
-        : "Инструментов нет, отвечай текстом, но не обещай действий.";
-      return `Ты — агент дневника TeleDrug. Твоя задача — определять, подходит ли сообщение для дневниковой записи, и при необходимости вызывать инструменты, чтобы сохранить запись и подсказать дополнительные действия. Отвечай на русском языке, лаконично, с заботливым тоном. Всегда подтверждай сохранение записи, если она создана инструментом. Если запись не подходит, дай короткий ответ и пояснение. ${toolList} ${interactionHint}`.trim();
+      return `Ты — агент дневника TeleDrug. Твоя задача — определять, подходит ли сообщение для дневниковой записи, и при необходимости вызывать инструменты, чтобы сохранить запись и подсказать дополнительные действия. Отвечай на русском языке, лаконично, с заботливым тоном. Всегда подтверждай сохранение записи, если она создана инструментом. Если запись не подходит, дай короткий ответ и пояснение. ${interactionHint}`.trim();
     },
   },
   tasks: {
     description:
       "Управляет задачами пользователя: создаёт, обновляет, завершает и показывает списки.",
-    buildSystemPrompt: (context, toolNames) => {
+    buildSystemPrompt: (context, _toolNames) => {
       const interactionHint = buildInteractionHint(context);
-      const toolList = toolNames.length
-        ? `Доступные инструменты: ${toolNames.join(", ")}.`
-        : "Инструментов нет, можешь только дать совет или попросить уточнение.";
-      return `Ты — агент задач TeleDrug. Управляй списком задач пользователя, помогай создавать, обновлять, завершать и переносить задачи. Говори по-русски, будь кратким и вежливым. Если инструментов нет, сообщи пользователю, что пока не можешь выполнить действие и предложи альтернативу. ${toolList} ${interactionHint}`.trim();
+      return `Ты — агент задач TeleDrug. Управляй списком задач пользователя, помогай создавать, обновлять, завершать и переносить задачи. Говори по-русски, будь кратким и вежливым. Если инструментов нет, сообщи пользователю, что пока не можешь выполнить действие и предложи альтернативу. ${interactionHint}`.trim();
     },
   },
   calendar: {
     description:
       "Работает с календарём: показывает события и создаёт новые встречи пользователя.",
-    buildSystemPrompt: (context, toolNames) => {
-      const interactionHint = buildInteractionHint(context);
-      const toolList = toolNames.length
-        ? `Доступные инструменты: ${toolNames.join(", ")}.`
-        : "Инструментов нет: объясни пользователю, что календарь недоступен.";
-      return `Ты — агент календаря TeleDrug. Помогай планировать расписание: показывай ближайшие события и создавай новые. Всегда уточняй необходимые детали (дата, время, описание) перед вызовом инструментов. Отвечай по-русски, структурируй информацию. ${toolList} ${interactionHint}`.trim();
+    buildSystemPrompt: (_context, _toolNames) => {
+      const now = new Date();
+      const localNow = now.toLocaleString("ru-RU", {
+        timeZone: "Europe/Moscow",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const utcNow = now.toISOString();
+      return `Ты — агент календаря TeleDrug. Ты создаёшь события в календаре. Всегда действуй по готовому запросу — не задавай уточняющих вопросов. Если пользователь дал недостаточно данных, оцени запрос и попробуй разумно дополнить недостающие части по умолчанию.
+
+Текущая дата и время:
+- Локальное (Europe/Moscow): ${localNow}
+- UTC: ${utcNow}
+`.trim();
     },
   },
   digest: {
@@ -419,8 +424,8 @@ const routeAgents = (
             {
               role: "system",
               content:
-                "Ты — маршрутизатор TeleDrug. Выбирай, какие специализированные агенты должны обработать сообщение пользователя. Верни массив agents в порядке вызова агентов. Избегай агентов без инструментов, если нет особой причины." +
-                "\nДоступные агенты:\n" +
+                "Ты — маршрутизатор TeleDrug. Выбирай только тех специализированных агентов, которые действительно нужны для ответа на запрос пользователя. Не добавляй агентов ради подстраховки. Если достаточно одного агента — верни массив с единственным именем. Если подходящих агентов нет, верни пустой массив." +
+                "\nДоступные агенты и их обязанности:\n" +
                 systemPromptLines.join("\n"),
             },
             {
@@ -438,10 +443,19 @@ const routeAgents = (
         const selectedAgents = (object.agents || []).filter((agent) =>
           agentNames.includes(agent)
         );
-        return selectedAgents as ReadonlyArray<DomainAgentType>;
+        if (selectedAgents.length > 0) {
+          return selectedAgents as ReadonlyArray<DomainAgentType>;
+        }
+
+        throw new AIAgentError({
+          message: "Router did not select any agents",
+        });
       } catch (cause) {
         if (NoObjectGeneratedError.isInstance?.(cause)) {
-          return [] as ReadonlyArray<DomainAgentType>;
+          throw new AIAgentError({
+            message: "Router did not return an agent list",
+            cause,
+          });
         }
         throw cause;
       }
@@ -468,9 +482,17 @@ const runDomainAgent = (
     const agent = new Agent({
       model: openai(config.model || "gpt-5-nano"),
       ...(toolNames.length > 0
-        ? { tools: bundle.tools, toolChoice: "required" }
+        ? { tools: bundle.tools, toolChoice: "auto" as const }
         : {}),
       maxOutputTokens: config.maxTokens,
+    });
+
+    yield* Effect.sync(() => {
+      console.log(`📋 ${kind} agent system prompt:\n${systemPrompt}`);
+      console.log(
+        `🗂️ ${kind} agent messages:`,
+        baseMessages.map((message) => ({ ...message }))
+      );
     });
 
     const result = yield* Effect.tryPromise({
@@ -484,6 +506,35 @@ const runDomainAgent = (
           message: `Domain agent ${kind} failed to generate response`,
           cause,
         }),
+    });
+
+    yield* Effect.sync(() => {
+      console.log(
+        `📨 ${kind} agent primary text:`,
+        result.text ? result.text.slice(0, 200) : "<empty>"
+      );
+      if (Array.isArray(result.toolCalls) && result.toolCalls.length > 0) {
+        console.log(
+          `🛠️ ${kind} agent tool calls:`,
+          result.toolCalls.map((call) => ({
+            toolName: call.toolName,
+            input: call.input,
+          }))
+        );
+      } else {
+        console.log(`🛠️ ${kind} agent tool calls: none`);
+      }
+      if (Array.isArray(result.toolResults) && result.toolResults.length > 0) {
+        console.log(
+          `📦 ${kind} agent tool results:`,
+          result.toolResults.map((tool) => ({
+            toolName: tool.toolName,
+            output: tool.output,
+          }))
+        );
+      } else {
+        console.log(`📦 ${kind} agent tool results: none`);
+      }
     });
 
     return {
