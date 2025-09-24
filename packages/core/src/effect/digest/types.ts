@@ -13,10 +13,10 @@ export interface DigestModuleResult {
   readonly text: string | null;
 }
 
-export interface DigestModuleImpl {
+export interface DigestModuleImpl<R = never> {
   readonly id: DigestModuleId;
   readonly fetch: (
     context: DigestModuleContext,
     settings: ModuleSettingEntry | undefined
-  ) => Effect.Effect<string | null, never>;
+  ) => Effect.Effect<string | null, never, R>;
 }

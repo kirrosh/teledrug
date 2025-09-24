@@ -2,8 +2,10 @@ import { Effect } from "effect";
 import type { DigestModuleImpl, DigestModuleResult } from "./types";
 import { WeatherDigestModule, FxDigestModule, CalendarDigestModule, TasksDigestModule } from "./modules";
 import { DigestSettingsRepository } from "../services/digest-settings";
+import { TaskRepository } from "../services/task-repository";
+import { UserRepository } from "../services/user-repository";
 
-const MODULES: ReadonlyArray<DigestModuleImpl> = [
+const MODULES: ReadonlyArray<DigestModuleImpl<any>> = [
   WeatherDigestModule,
   FxDigestModule,
   CalendarDigestModule,
@@ -13,7 +15,11 @@ const MODULES: ReadonlyArray<DigestModuleImpl> = [
 export const runDailyDigest = (
   userId: number,
   date: Date
-): Effect.Effect<ReadonlyArray<DigestModuleResult>, never> =>
+): Effect.Effect<
+  ReadonlyArray<DigestModuleResult>,
+  never,
+  typeof DigestSettingsRepository | typeof TaskRepository | typeof UserRepository
+> =>
   Effect.gen(function* () {
     const settingsRepo = yield* DigestSettingsRepository;
     const moduleSettings = yield* settingsRepo.getSettingsByUser(userId);

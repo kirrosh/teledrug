@@ -1,4 +1,4 @@
-import { Effect, Console } from "effect";
+import { Effect } from "effect";
 import type { DigestModuleImpl } from "../types";
 import type { ModuleSettingEntry } from "../../services/digest-settings";
 
@@ -83,9 +83,13 @@ const fetchFxRate = (base: string, quote: string) =>
 
       if (histPayload.result === "success" && histPayload.rates) {
         const keys = Object.keys(histPayload.rates).sort();
-        const firstDay = histPayload.rates[keys[0]]?.[quote];
-        if (firstDay && firstDay !== 0) {
-          changePct = ((rate - firstDay) / firstDay) * 100;
+        if (keys.length > 0) {
+          const firstKey = keys[0]!;
+          const dayRates = histPayload.rates[firstKey];
+          const firstDayRate = dayRates?.[quote];
+          if (firstDayRate && firstDayRate !== 0) {
+            changePct = ((rate - firstDayRate) / firstDayRate) * 100;
+          }
         }
       }
     }
@@ -123,9 +127,10 @@ export const FxDigestModule: DigestModuleImpl = {
 
       const fx = yield* fetchFxRate(base, quote).pipe(
         Effect.catchAll((error) =>
-          Console.error("❌ FX fetch failed:", error).pipe(
-            Effect.flatMap(() => Effect.succeed<FxSummary | null>(null))
-          )
+          Effect.sync(() => {
+            console.error("❌ FX fetch failed:", error);
+            return null as FxSummary | null;
+          })
         )
       );
 

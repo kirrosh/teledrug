@@ -1,4 +1,4 @@
-import { Effect, Console } from "effect";
+import { Effect } from "effect";
 import { tool } from "ai";
 import { z } from "zod";
 import { DigestSettingsRepository } from "../services/digest-settings";
@@ -112,11 +112,10 @@ export const createDigestTools = (userId: number) =>
         const message = await Effect.runPromise(
           handleAction(input).pipe(
             Effect.catchAll((error) =>
-              Console.error("❌ Digest settings update failed:", error).pipe(
-                Effect.flatMap(() =>
-                  Effect.succeed("⚠️ Не удалось обновить настройки")
-                )
-              )
+              Effect.sync(() => {
+                console.error("❌ Digest settings update failed:", error);
+                return "⚠️ Не удалось обновить настройки";
+              })
             )
           )
         );

@@ -2,15 +2,15 @@ import { Schema } from "effect";
 import {
   JournalEnergySchema,
   JournalMoodSchema,
-  type JournalEnergy,
-  type JournalMood,
+  type JournalEnergy as JournalEnergyType,
+  type JournalMood as JournalMoodType,
 } from "../schemas/database";
 
 export const JournalMood = JournalMoodSchema;
 export const JournalEnergy = JournalEnergySchema;
 
-export type Mood = JournalMood;
-export type Energy = JournalEnergy;
+export type Mood = JournalMoodType;
+export type Energy = JournalEnergyType;
 
 export const moodEmojiMap: Record<Mood, string> = {
   very_negative: "😞",

@@ -6,8 +6,7 @@ import {
   type DigestModule,
 } from "../../storage/database/schema";
 import { and, eq } from "drizzle-orm";
-
-export type DigestModuleId = "weather" | "fx" | "calendar" | "tasks";
+import type { DigestModuleId } from "../digest/types";
 
 export interface ModuleSettingEntry {
   readonly module: DigestModuleId;
@@ -114,16 +113,18 @@ type EnsureDefaultsFn = (
 ) => Effect.Effect<void, never>;
 
 const makeRepository = Effect.gen(function* () {
-  const loadModules = Effect.tryPromise(async () => {
-    const rows = await db.select().from(digestModules);
-    const map: ModuleMap = new Map();
+  const loadModules: Effect.Effect<ModuleMap, never> = Effect.tryPromise(
+    async () => {
+      const rows = await db.select().from(digestModules);
+      const map: ModuleMap = new Map();
 
-    for (const row of rows) {
-      map.set(row.module as DigestModuleId, row);
+      for (const row of rows) {
+        map.set(row.module as DigestModuleId, row);
+      }
+
+      return map;
     }
-
-    return map;
-  });
+  ).pipe(Effect.catchAll(() => Effect.succeed(new Map())));
 
   const ensureModulesExist = loadModules.pipe(
     Effect.flatMap((existing) =>

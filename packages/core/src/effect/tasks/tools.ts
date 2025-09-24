@@ -299,7 +299,14 @@ export const createTaskTools = (userId: number) =>
                     suggestions: toSuggestionList(resolved.tasks),
                   };
                 case "one": {
-                  const ok = yield* repo.complete(resolved.task.id, userId);
+                  const task = resolved.task;
+                  if (!task) {
+                    return {
+                      success: false as const,
+                      error: "Задача не найдена",
+                    };
+                  }
+                  const ok = yield* repo.complete(task.id, userId);
                   if (!ok) {
                     return {
                       success: false as const,
@@ -308,7 +315,7 @@ export const createTaskTools = (userId: number) =>
                   }
                   return {
                     success: true as const,
-                    message: `✅ Задача завершена: *${escape(resolved.task.title)}*`,
+                    message: `✅ Задача завершена: *${escape(task.title)}*`,
                   };
                 }
               }
@@ -342,7 +349,14 @@ export const createTaskTools = (userId: number) =>
                     suggestions: toSuggestionList(resolved.tasks),
                   };
                 case "one": {
-                  const ok = yield* repo.delete(resolved.task.id, userId);
+                  const task = resolved.task;
+                  if (!task) {
+                    return {
+                      success: false as const,
+                      error: "Задача не найдена",
+                    };
+                  }
+                  const ok = yield* repo.delete(task.id, userId);
                   if (!ok) {
                     return {
                       success: false as const,
@@ -351,7 +365,7 @@ export const createTaskTools = (userId: number) =>
                   }
                   return {
                     success: true as const,
-                    message: `🗑 Задача удалена: *${escape(resolved.task.title)}*`,
+                    message: `🗑 Задача удалена: *${escape(task.title)}*`,
                   };
                 }
               }
@@ -385,6 +399,13 @@ export const createTaskTools = (userId: number) =>
                     suggestions: toSuggestionList(resolved.tasks),
                   };
                 case "one": {
+                  const task = resolved.task;
+                  if (!task) {
+                    return {
+                      success: false as const,
+                      error: "Задача не найдена",
+                    };
+                  }
                   const dueAt =
                     input.set.dueAt === undefined
                       ? undefined
@@ -392,7 +413,7 @@ export const createTaskTools = (userId: number) =>
                       ? null
                       : new Date(input.set.dueAt);
 
-                  const updated = yield* repo.update(resolved.task.id, userId, {
+                  const updated = yield* repo.update(task.id, userId, {
                     title: input.set.title,
                     dueAt,
                     status: input.set.status,
@@ -437,8 +458,15 @@ export const createTaskTools = (userId: number) =>
                     suggestions: toSuggestionList(resolved.tasks),
                   };
                 case "one": {
+                  const task = resolved.task;
+                  if (!task) {
+                    return {
+                      success: false as const,
+                      error: "Задача не найдена",
+                    };
+                  }
                   const dueAt = parseShift(input.shift.toLowerCase());
-                  const updated = yield* repo.update(resolved.task.id, userId, {
+                  const updated = yield* repo.update(task.id, userId, {
                     dueAt,
                   });
                   return {

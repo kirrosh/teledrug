@@ -1,12 +1,4 @@
-import {
-  Effect,
-  Context,
-  Layer,
-  Schema,
-  Cache,
-  Duration,
-  Console,
-} from "effect";
+import { Effect, Context, Layer, Schema, Cache, Duration } from "effect";
 import { generateText, type GenerateTextResult } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { AIAgentError } from "../errors";
@@ -89,11 +81,13 @@ const makeAIAgent = (config: AIAgentConfig) =>
     const processMessage = (
       context: SimpleChatContext,
       conversationHistory: readonly string[] = []
-    ) =>
+    ): Effect.Effect<AIAgentResponse, AIAgentError, IntegrationRegistry> =>
       Effect.gen(function* () {
         try {
-          console.log(
-            `🤖 Processing message for user ${context.userId}: "${context.messageContent}"`
+          yield* Effect.sync(() =>
+            console.log(
+              `🤖 Processing message for user ${context.userId}: "${context.messageContent}"`
+            )
           );
 
           // Validate context
@@ -122,10 +116,12 @@ const makeAIAgent = (config: AIAgentConfig) =>
           // Select model
           const model = openai(validatedConfig.model || "gpt-5-nano");
 
-          console.log(
-            `📡 Calling OpenAI API with model: ${
-              validatedConfig.model || "gpt-5-nano"
-            }`
+          yield* Effect.sync(() =>
+            console.log(
+              `📡 Calling OpenAI API with model: ${
+                validatedConfig.model || "gpt-5-nano"
+              }`
+            )
           );
 
           // Get tools from integration registry
@@ -145,43 +141,55 @@ const makeAIAgent = (config: AIAgentConfig) =>
               )
             );
 
-          yield* Console.log(
-            `🔧 Found ${
-              Object.keys(userTools.tools).length
-            } tools for interaction type: ${
-              validatedContext.interactionType || "TEXT"
-            }`
+          yield* Effect.sync(() =>
+            console.log(
+              `🔧 Found ${
+                Object.keys(userTools.tools).length
+              } tools for interaction type: ${
+                validatedContext.interactionType || "TEXT"
+              }`
+            )
           );
 
           // Call OpenAI API with tools - they execute automatically in AI SDK v5
           const hasTools = Object.keys(userTools.tools).length > 0;
-          const result = yield* Effect.promise(() =>
-            generateText({
-              model,
-              messages,
-              tools: hasTools ? userTools.tools : undefined,
-              toolChoice: hasTools ? "required" : undefined,
-            })
-          );
+          const result = yield* Effect.tryPromise({
+            try: () =>
+              generateText({
+                model,
+                messages,
+                tools: hasTools ? userTools.tools : undefined,
+                toolChoice: hasTools ? "required" : undefined,
+              }),
+            catch: (cause) =>
+              new AIAgentError({
+                message: "OpenAI generateText call failed",
+                cause,
+              }),
+          });
 
           // Tools уже выполнены автоматически, просто логируем
           if (result.toolCalls && result.toolCalls.length > 0) {
-            yield* Console.log(`🚀 AI called ${result.toolCalls.length} tools`);
+            yield* Effect.sync(() =>
+              console.log(`🚀 AI called ${result.toolCalls.length} tools`)
+            );
 
             for (const toolCall of result.toolCalls) {
-              yield* Console.log(
-                `✅ Tool ${toolCall.toolName} executed successfully`
+              yield* Effect.sync(() =>
+                console.log(`✅ Tool ${toolCall.toolName} executed successfully`)
               );
             }
           }
 
           if (result.toolResults && result.toolResults.length > 0) {
-            yield* Console.log(
-              `📊 Received ${result.toolResults.length} tool results`
+            yield* Effect.sync(() =>
+              console.log(`📊 Received ${result.toolResults.length} tool results`)
             );
           }
 
-          console.log(`✅ AI response: ${result.text.substring(0, 100)}...`);
+          yield* Effect.sync(() =>
+            console.log(`✅ AI response: ${result.text.substring(0, 100)}...`)
+          );
 
           return {
             result,
@@ -202,7 +210,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
       userId: string | number,
       text: string,
       conversationHistory: readonly string[] = []
-    ) => {
+    ): Effect.Effect<AIAgentResponse, AIAgentError, IntegrationRegistry> => {
       const context: SimpleChatContext = {
         userId,
         chatId: userId, // Use userId as chatId for simplicity
@@ -291,11 +299,11 @@ const buildMessages = (
 export interface AIAgentFactory {
   readonly getOrCreateAgent: (
     userId: string | number
-  ) => Effect.Effect<AIAgent, AIAgentError>;
+  ) => Effect.Effect<AIAgent, AIAgentError, IntegrationRegistry>;
   readonly createAgent: (
     userId: string | number,
     config?: Partial<AIAgentConfig>
-  ) => Effect.Effect<AIAgent, AIAgentError>;
+  ) => Effect.Effect<AIAgent, AIAgentError, IntegrationRegistry>;
   readonly invalidateUser?: (
     userId: string | number
   ) => Effect.Effect<void, never>;
@@ -315,7 +323,9 @@ const makeAIAgentFactory = (baseConfig: AIAgentConfig) =>
       timeToLive: Duration.hours(1), // Agents expire after 1 hour
       lookup: (userId: string | number) =>
         Effect.gen(function* () {
-          console.log(`🔨 Creating new AI agent for user: ${userId}`);
+          yield* Effect.sync(() =>
+            console.log(`🔨 Creating new AI agent for user: ${userId}`)
+          );
 
           const config: AIAgentConfig = {
             ...baseConfig,
@@ -325,7 +335,9 @@ const makeAIAgentFactory = (baseConfig: AIAgentConfig) =>
           // Create agent for this user
           const agent = yield* makeAIAgent(config);
 
-          console.log(`✅ Created AI agent for user: ${userId}`);
+          yield* Effect.sync(() =>
+            console.log(`✅ Created AI agent for user: ${userId}`)
+          );
           return agent;
         }).pipe(
           Effect.tap(() =>
@@ -339,11 +351,13 @@ const makeAIAgentFactory = (baseConfig: AIAgentConfig) =>
     const createAgent = (
       userId: string | number,
       userConfig: Partial<AIAgentConfig> = {}
-    ) =>
+    ): Effect.Effect<AIAgent, AIAgentError, IntegrationRegistry> =>
       Effect.gen(function* () {
         // For custom configs, create without caching
         if (Object.keys(userConfig).length > 0) {
-          console.log(`🎨 Creating custom AI agent for user: ${userId}`);
+          yield* Effect.sync(() =>
+            console.log(`🎨 Creating custom AI agent for user: ${userId}`)
+          );
           const config: AIAgentConfig = {
             ...baseConfig,
             ...userConfig,
@@ -356,14 +370,18 @@ const makeAIAgentFactory = (baseConfig: AIAgentConfig) =>
         return yield* agentCache.get(userId);
       });
 
-    const getOrCreateAgent = (userId: string | number) =>
+    const getOrCreateAgent = (
+      userId: string | number
+    ): Effect.Effect<AIAgent, AIAgentError, IntegrationRegistry> =>
       Effect.gen(function* () {
         const agent = yield* agentCache.get(userId);
 
         // Cache.get already handles the cache miss case
         const cacheStats = yield* agentCache.cacheStats;
-        console.log(
-          `📊 Cache stats - Hits: ${cacheStats.hits}, Misses: ${cacheStats.misses}, Size: ${cacheStats.size}`
+        yield* Effect.sync(() =>
+          console.log(
+            `📊 Cache stats - Hits: ${cacheStats.hits}, Misses: ${cacheStats.misses}, Size: ${cacheStats.size}`
+          )
         );
 
         return agent;

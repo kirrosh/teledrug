@@ -455,7 +455,9 @@ const makeTelegramClient = (config: BotConfig) =>
 
               return Effect.gen(function* () {
                 yield* messageHistory.addAssistantMessage(chatId, errorMessage);
-                yield* finalizeMessage(errorMessage, false);
+                yield* finalizeMessage({
+                  text: errorMessage,
+                });
               });
             })
           );

@@ -1,7 +1,10 @@
 import { Effect } from "effect";
 import type { DigestModuleImpl } from "../types";
 import type { ModuleSettingEntry } from "../../services/digest-settings";
-import { TaskRepository } from "../../services/task-repository";
+import {
+  TaskRepository as TaskRepositoryTag,
+  type TaskRepository as TaskRepositoryService,
+} from "../../services/task-repository";
 
 interface TaskSettings {
   readonly limit?: number;
@@ -21,14 +24,14 @@ const formatTaskLine = (title: string, dueAt?: Date | null) => {
   return `• ${hh}:${mm} — ${title}`;
 };
 
-export const TasksDigestModule: DigestModuleImpl = {
+export const TasksDigestModule: DigestModuleImpl<TaskRepositoryService> = {
   id: "tasks",
   fetch: (context, entry) =>
     Effect.gen(function* () {
       if (!entry?.enabled) return null;
 
       const settings = parseSettings(entry);
-      const repo = yield* TaskRepository;
+      const repo = yield* TaskRepositoryTag;
       const tasks = yield* repo.listForToday(context.userId, settings.limit).pipe(
         Effect.catchAll(() => Effect.succeed([]))
       );

@@ -1,4 +1,4 @@
-import { Effect, Console, Layer } from "effect";
+import { Effect } from "effect";
 import { db, sql } from "../../storage/database/client";
 import { users } from "../../storage/database/schema";
 
@@ -9,9 +9,10 @@ const fetchRecipients = Effect.tryPromise(async () => {
     .filter((value): value is number => Number.isFinite(value));
 }).pipe(
   Effect.catchAll((error) =>
-    Console.error("❌ Failed to fetch recipients from database:", error).pipe(
-      Effect.flatMap(() => Effect.succeed<readonly number[]>([]))
-    )
+    Effect.sync(() => {
+      console.error("❌ Failed to fetch recipients from database:", error);
+      return [] as readonly number[];
+    })
   )
 );
 
@@ -36,9 +37,10 @@ const sendTelegramMessage = (
   }).pipe(
     Effect.as(true),
     Effect.catchAll((error) =>
-      Console.error(`❌ Failed to send evening prompt to ${chatId}:`, error).pipe(
-        Effect.flatMap(() => Effect.succeed(false))
-      )
+      Effect.sync(() => {
+        console.error(`❌ Failed to send evening prompt to ${chatId}:`, error);
+        return false;
+      })
     )
   );
 
@@ -49,13 +51,17 @@ const program = Effect.gen(function* () {
   const token = process.env.TELEGRAM_BOT_TOKEN;
 
   if (!token) {
-    yield* Console.log("❌ TELEGRAM_BOT_TOKEN is not set; aborting evening job");
+    yield* Effect.sync(() =>
+      console.log("❌ TELEGRAM_BOT_TOKEN is not set; aborting evening job")
+    );
     return;
   }
 
   const recipients = yield* fetchRecipients;
   if (recipients.length === 0) {
-    yield* Console.log("⚠️ Evening prompt skipped: no recipients found");
+    yield* Effect.sync(() =>
+      console.log("⚠️ Evening prompt skipped: no recipients found")
+    );
     return;
   }
 
@@ -71,8 +77,10 @@ const program = Effect.gen(function* () {
     { discard: true }
   );
 
-  yield* Console.log(`✅ Evening prompts sent (${success}/${recipients.length})`);
-}).pipe(Layer.use(Layer.empty));
+  yield* Effect.sync(() =>
+    console.log(`✅ Evening prompts sent (${success}/${recipients.length})`)
+  );
+});
 
 Effect.runPromise(program)
   .catch((error) => {
@@ -87,4 +95,3 @@ Effect.runPromise(program)
   .then(() => {
     process.exit(process.exitCode ?? 0);
   });
-

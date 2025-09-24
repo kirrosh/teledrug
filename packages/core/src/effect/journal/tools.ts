@@ -5,7 +5,7 @@ import { JournalAnalysisService } from "../services/journal-analysis";
 import { JournalRepository } from "../services/journal-repository";
 import { energyEmojiMap, moodEmojiMap } from "./model";
 import type { ToolResultFormatter } from "../types/integrations";
-import { generateText, generateObject } from "ai";
+import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { TaskRepository } from "../services/task-repository";
 
@@ -84,7 +84,7 @@ const formatCreateJournalEntryResult: ToolResultFormatter = (output) =>
       | { success: true; data: CreateJournalEntryResult }
       | { success?: false; error?: string };
 
-    if (!result.success) {
+    if (result.success !== true) {
       const message = result.error?.trim();
       return {
         text: message
@@ -115,14 +115,9 @@ const formatCreateJournalEntryResult: ToolResultFormatter = (output) =>
           .join(" ")}`
       : "";
 
-    const suggestions = Array.isArray((data as any).suggestions)
-      ? ((data as any).suggestions as ReadonlyArray<{
-          title: string;
-          dueAt?: string | null;
-        }>)
-      : [];
-    const completeSuggestions = Array.isArray((data as any).completeSuggestions)
-      ? ((data as any).completeSuggestions as ReadonlyArray<{ title: string }>)
+    const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+    const completeSuggestions = Array.isArray(data.completeSuggestions)
+      ? data.completeSuggestions
       : [];
 
     const suggestionLines = suggestions.length
@@ -233,7 +228,10 @@ export const createJournalTools = (userId: number) =>
         return {
           create: object.create.slice(0, 5),
           complete: object.complete.slice(0, 5),
-        } as { create: Array<{ title: string; dueAt?: string | null }>; complete: Array<{ title: string }> };
+        } as {
+          create: Array<{ title: string; dueAt?: string | null }>;
+          complete: Array<{ title: string }>;
+        };
       }).pipe(
         Effect.catchAll(() => Effect.succeed({ create: [], complete: [] }))
       );
@@ -268,10 +266,7 @@ export const createJournalTools = (userId: number) =>
             },
           });
 
-          const entryDateValue =
-            entry.entryDate instanceof Date
-              ? entry.entryDate
-              : new Date(entry.entryDate);
+          const entryDateValue = new Date(entry.entryDate);
           const entryDate = Number.isNaN(entryDateValue.getTime())
             ? new Date().toISOString()
             : entryDateValue.toISOString();
