@@ -38,7 +38,7 @@ export const createMainLayer = (
   // Level 2: UserConfigStorage требует UserRepository
   const userConfig = pipe(
     UserConfigStorageLive,
-    Layer.provide(userRepository)  // ✅ Явно предоставляем зависимость
+    Layer.provide(userRepository) // ✅ Явно предоставляем зависимость
   );
 
   // Level 2: IntegrationRegistry требует UserRepository
@@ -56,10 +56,10 @@ export const createMainLayer = (
     AIAgentFactoryLive({
       openaiApiKey: config.openaiApiKey,
       model: "gpt-5-nano",
-      maxTokens: 1000,
+      maxTokens: 2000,
       userId: "default",
     }),
-    Layer.provide(integrationRegistry)  // ✅ Явно предоставляем зависимость
+    Layer.provide(integrationRegistry) // ✅ Явно предоставляем зависимость
   );
 
   // Level 3: TelegramClient требует множество сервисов
@@ -67,11 +67,11 @@ export const createMainLayer = (
     TelegramClientLive(config),
     Layer.provide(
       Layer.mergeAll(
-        userConfig,           // Уже включает userRepository и encryption
-        aiAgent,              // Уже включает integrationRegistry
+        userConfig, // Уже включает userRepository и encryption
+        aiAgent, // Уже включает integrationRegistry
         messageHistory,
         cryptography,
-        integrationRegistry,  // ✅ Явно добавляем для TelegramClient
+        integrationRegistry, // ✅ Явно добавляем для TelegramClient
         journalRepository,
         taskRepository
       )
@@ -91,16 +91,13 @@ export const createMainLayer = (
 
     // Сервисы с разрешенными зависимостями
     digestSettings,
-    userRepository,     // Уже имеет encryption и digest settings
-    userConfig,         // Уже имеет userRepository
-    aiAgent,           // Уже имеет integrationRegistry
-    telegram           // Уже имеет все необходимое
+    userRepository, // Уже имеет encryption и digest settings
+    userConfig, // Уже имеет userRepository
+    aiAgent, // Уже имеет integrationRegistry
+    telegram // Уже имеет все необходимое
   );
 
-  return pipe(
-    BotApplicationLive,
-    Layer.provide(finalContext)
-  );
+  return pipe(BotApplicationLive, Layer.provide(finalContext));
 };
 
 // Default main layer using environment config

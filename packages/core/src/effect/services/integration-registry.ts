@@ -24,11 +24,21 @@ export interface IntegrationToolsBundle {
   readonly progressMessages: Record<string, string>;
 }
 
+export type DomainAgentType = "digest" | "journal" | "tasks" | "calendar";
+
+export type DomainIntegrationTools = Partial<
+  Record<DomainAgentType, IntegrationToolsBundle>
+>;
+
 export interface IntegrationRegistry {
   readonly getToolsForUser: (
     userId: string | number,
     interactionType: InteractionType
   ) => Effect.Effect<IntegrationToolsBundle, IntegrationError>;
+  readonly getDomainToolsForUser: (
+    userId: string | number,
+    interactionType: InteractionType
+  ) => Effect.Effect<DomainIntegrationTools, IntegrationError>;
 }
 
 export const IntegrationRegistry = Context.GenericTag<IntegrationRegistry>(
@@ -50,6 +60,28 @@ const toNumericUserId = (userId: string | number) => {
   return parsed;
 };
 
+const mergeBundles = (
+  existing: IntegrationToolsBundle | undefined,
+  incoming: IntegrationToolsBundle
+): IntegrationToolsBundle => {
+  if (!existing) {
+    return {
+      tools: { ...incoming.tools },
+      formatters: { ...incoming.formatters },
+      progressMessages: { ...incoming.progressMessages },
+    };
+  }
+
+  return {
+    tools: { ...existing.tools, ...incoming.tools },
+    formatters: { ...existing.formatters, ...incoming.formatters },
+    progressMessages: {
+      ...existing.progressMessages,
+      ...incoming.progressMessages,
+    },
+  };
+};
+
 const makeIntegrationRegistry = Effect.gen(function* () {
   const userRepository = yield* UserRepository;
   const digestSettings = yield* DigestSettingsRepository;
@@ -59,10 +91,10 @@ const makeIntegrationRegistry = Effect.gen(function* () {
 
   yield* Effect.sync(() => console.log("🔧 Initializing Integration Registry..."));
 
-  const getToolsForUser = (
+  const prepareBundles = (
     userId: string | number,
     interactionType: InteractionType
-  ): Effect.Effect<IntegrationToolsBundle, IntegrationError> =>
+  ) =>
     Effect.gen(function* () {
       const numericUserId = yield* Effect.try({
         try: () => toNumericUserId(userId),
@@ -79,6 +111,8 @@ const makeIntegrationRegistry = Effect.gen(function* () {
         )
       );
 
+      const domainBundles: DomainIntegrationTools = {};
+
       const digestToolsBundle = yield* createDigestTools(numericUserId).pipe(
         Effect.provideService(DigestSettingsRepository, digestSettings),
         Effect.mapError(
@@ -89,6 +123,8 @@ const makeIntegrationRegistry = Effect.gen(function* () {
             })
         )
       );
+
+      domainBundles.digest = digestToolsBundle;
 
       const journalToolsBundle = yield* createJournalTools(numericUserId).pipe(
         Effect.provideService(JournalAnalysisService, journalAnalysis),
@@ -103,6 +139,8 @@ const makeIntegrationRegistry = Effect.gen(function* () {
         )
       );
 
+      domainBundles.journal = journalToolsBundle;
+
       const taskToolsBundle = yield* createTaskTools(numericUserId).pipe(
         Effect.provide(TaskRepositoryLive),
         Effect.mapError(
@@ -113,6 +151,8 @@ const makeIntegrationRegistry = Effect.gen(function* () {
             })
         )
       );
+
+      domainBundles.tasks = taskToolsBundle;
 
       const integrations = yield* userRepository
         .getAllDecryptedIntegrations(numericUserId)
@@ -126,21 +166,7 @@ const makeIntegrationRegistry = Effect.gen(function* () {
           )
         );
 
-      const tools: Record<string, AITool> = {
-        ...digestToolsBundle.tools,
-        ...journalToolsBundle.tools,
-        ...taskToolsBundle.tools,
-      };
-      const formatters: Record<string, ToolResultFormatter> = {
-        ...digestToolsBundle.formatters,
-        ...journalToolsBundle.formatters,
-        ...taskToolsBundle.formatters,
-      };
-      const progressMessages: Record<string, string> = {
-        ...digestToolsBundle.progressMessages,
-        ...journalToolsBundle.progressMessages,
-        ...taskToolsBundle.progressMessages,
-      };
+      let calendarBundle: IntegrationToolsBundle | undefined;
 
       if (integrations.length === 0) {
         yield* Effect.sync(() =>
@@ -180,11 +206,13 @@ const makeIntegrationRegistry = Effect.gen(function* () {
               },
             });
 
-            Object.assign(tools, yandexTools.tools);
-            Object.assign(formatters, yandexTools.formatters);
-            if (yandexTools.progressMessages) {
-              Object.assign(progressMessages, yandexTools.progressMessages);
-            }
+            calendarBundle = mergeBundles(calendarBundle, {
+              tools: { ...yandexTools.tools },
+              formatters: { ...yandexTools.formatters },
+              progressMessages: {
+                ...(yandexTools.progressMessages ?? {}),
+              },
+            });
             yield* Effect.sync(() =>
               console.log(
                 `✅ Registry: added ${
@@ -204,23 +232,57 @@ const makeIntegrationRegistry = Effect.gen(function* () {
         }
       }
 
+      if (calendarBundle) {
+        domainBundles.calendar = calendarBundle;
+      }
+
+      const nonEmptyDomainBundles = Object.fromEntries(
+        Object.entries(domainBundles).filter(([, bundle]) =>
+          bundle ? Object.keys(bundle.tools).length > 0 : false
+        )
+      ) as DomainIntegrationTools;
+
+      const combined = Object.values(nonEmptyDomainBundles).reduce<
+        IntegrationToolsBundle
+      >(
+        (acc, bundle) => mergeBundles(acc, bundle),
+        {
+          tools: {},
+          formatters: {},
+          progressMessages: {},
+        }
+      );
+
       yield* Effect.sync(() =>
         console.log(
           `✅ Registry: prepared ${
-            Object.keys(tools).length
+            Object.keys(combined.tools).length
           } tool(s) for user ${numericUserId}`
         )
       );
 
-      return {
-        tools,
-        formatters,
-        progressMessages,
-      } satisfies IntegrationToolsBundle;
+      return { combined, domains: nonEmptyDomainBundles } as const;
     });
+
+  const getToolsForUser = (
+    userId: string | number,
+    interactionType: InteractionType
+  ): Effect.Effect<IntegrationToolsBundle, IntegrationError> =>
+    prepareBundles(userId, interactionType).pipe(
+      Effect.map(({ combined }) => combined)
+    );
+
+  const getDomainToolsForUser = (
+    userId: string | number,
+    interactionType: InteractionType
+  ): Effect.Effect<DomainIntegrationTools, IntegrationError> =>
+    prepareBundles(userId, interactionType).pipe(
+      Effect.map(({ domains }) => domains)
+    );
 
   return {
     getToolsForUser,
+    getDomainToolsForUser,
   } satisfies IntegrationRegistry;
 });
 
