@@ -1,10 +1,45 @@
 import { eq, and } from 'drizzle-orm';
 import { db } from '../client';
-import { users, userIntegrations, type User, type NewUser, type UserIntegration, type NewUserIntegration } from '../schema';
+import { users, userIntegrations, userSettings, type User, type NewUser, type UserIntegration, type UserSetting } from '../schema';
 import { getEncryptionService } from '../../../security/encryption';
 
 export class UserRepository {
   private encryptionService = getEncryptionService();
+
+  private readonly DEFAULT_USER_SETTINGS = {
+    timezone: 'UTC' as const,
+    locale: 'ru-RU' as const,
+  };
+
+  private async ensureUserSettings(userId: number): Promise<UserSetting> {
+    const [existing] = await db
+      .select()
+      .from(userSettings)
+      .where(eq(userSettings.userId, userId))
+      .limit(1);
+
+    if (existing) {
+      return existing;
+    }
+
+    await db.insert(userSettings).values({
+      userId,
+      timezone: this.DEFAULT_USER_SETTINGS.timezone,
+      locale: this.DEFAULT_USER_SETTINGS.locale,
+    });
+
+    const [created] = await db
+      .select()
+      .from(userSettings)
+      .where(eq(userSettings.userId, userId))
+      .limit(1);
+
+    if (!created) {
+      throw new Error('Failed to create user settings');
+    }
+
+    return created;
+  }
 
   // User operations
   async createUser(user: NewUser): Promise<User> {
@@ -12,6 +47,7 @@ export class UserRepository {
     if (!newUser) {
       throw new Error('Failed to create user');
     }
+    await this.ensureUserSettings(newUser.telegramId);
     return newUser;
   }
 
@@ -40,7 +76,62 @@ export class UserRepository {
       user = updated;
     }
 
+    await this.ensureUserSettings(user.telegramId);
+
     return user;
+  }
+
+  async getUserSettings(userId: number): Promise<UserSetting> {
+    return this.ensureUserSettings(userId);
+  }
+
+  async updateUserSettings(
+    userId: number,
+    patch: Partial<{
+      timezone: string;
+      locale: string;
+      city: string | null;
+      country: string | null;
+      preferences: Record<string, unknown> | null;
+    }>
+  ): Promise<UserSetting> {
+    await this.ensureUserSettings(userId);
+
+    const updatePayload: Record<string, unknown> = {
+      updatedAt: new Date(),
+    };
+
+    if (patch.timezone !== undefined) {
+      updatePayload.timezone = patch.timezone;
+    }
+
+    if (patch.locale !== undefined) {
+      updatePayload.locale = patch.locale;
+    }
+
+    if (patch.city !== undefined) {
+      updatePayload.city = patch.city;
+    }
+
+    if (patch.country !== undefined) {
+      updatePayload.country = patch.country;
+    }
+
+    if (patch.preferences !== undefined) {
+      updatePayload.preferences = patch.preferences;
+    }
+
+    const [updated] = await db
+      .update(userSettings)
+      .set(updatePayload)
+      .where(eq(userSettings.userId, userId))
+      .returning();
+
+    if (!updated) {
+      throw new Error('Failed to update user settings');
+    }
+
+    return updated;
   }
 
   // Integration operations

@@ -10,6 +10,12 @@ export interface UserIntegrationConfig {
 export interface UserConfig {
   userId: string | number;
   username?: string;
+  settings: {
+    timezone: string;
+    locale: string;
+    city?: string | null;
+    country?: string | null;
+  };
   integrations: UserIntegrationConfig[];
   aiSettings?: {
     model?: string;
@@ -37,11 +43,20 @@ export class UserConfigStorage {
       return undefined;
     }
 
+    const settings = await this.userRepository.getUserSettings(numericUserId);
+    const preferences = settings.preferences as Record<string, any> | null | undefined;
+
     const integrations = await this.userRepository.getAllDecryptedIntegrations(numericUserId);
 
     const config: UserConfig = {
       userId: user.telegramId,
       username: user.username || undefined,
+      settings: {
+        timezone: settings.timezone,
+        locale: settings.locale,
+        city: settings.city ?? undefined,
+        country: settings.country ?? undefined,
+      },
       integrations: integrations.map(({ integration, credentials }) => ({
         name: integration.integrationType,
         credentials,
@@ -51,6 +66,7 @@ export class UserConfigStorage {
       aiSettings: {
         model: 'gpt-5-nano',
       },
+      preferences: preferences ?? undefined,
     };
 
     // Cache the config
@@ -63,6 +79,38 @@ export class UserConfigStorage {
 
     // Ensure user exists
     await this.userRepository.getOrCreateUser(numericUserId, config.username);
+
+    const settingsPatch: {
+      timezone?: string;
+      locale?: string;
+      city?: string | null;
+      country?: string | null;
+      preferences?: Record<string, any> | null;
+    } = {};
+
+    if (config.settings && 'timezone' in config.settings) {
+      settingsPatch.timezone = config.settings.timezone;
+    }
+
+    if (config.settings && 'locale' in config.settings) {
+      settingsPatch.locale = config.settings.locale;
+    }
+
+    if (config.settings && 'city' in config.settings) {
+      settingsPatch.city = config.settings.city ?? null;
+    }
+
+    if (config.settings && 'country' in config.settings) {
+      settingsPatch.country = config.settings.country ?? null;
+    }
+
+    if (config.preferences !== undefined) {
+      settingsPatch.preferences = config.preferences ?? null;
+    }
+
+    if (Object.keys(settingsPatch).length > 0) {
+      await this.userRepository.updateUserSettings(numericUserId, settingsPatch);
+    }
 
     // Save each integration
     for (const integration of config.integrations) {

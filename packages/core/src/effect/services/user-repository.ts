@@ -1,14 +1,15 @@
 import { Effect, Context, Layer, Option } from "effect"
-import { eq, and } from 'drizzle-orm'
-import { db } from '../../storage/database/client'
-import { users, userIntegrations } from '../../storage/database/schema'
-import { DigestSettingsRepository } from './digest-settings'
-import { EncryptionService, type EncryptedData } from './encryption'
+import { eq, and } from "drizzle-orm"
+import { db } from "../../storage/database/client"
+import { users, userIntegrations, userSettings } from "../../storage/database/schema"
+import { DigestSettingsRepository } from "./digest-settings"
+import { EncryptionService, type EncryptedData } from "./encryption"
 import {
   type User,
   type NewUser,
   type UserIntegration,
-} from '../schemas/database'
+  type UserSettings,
+} from "../schemas/database"
 
 export class DatabaseError {
   readonly _tag = "DatabaseError"
@@ -29,6 +30,19 @@ export interface UserRepository {
   readonly createUser: (user: NewUser) => Effect.Effect<User, DatabaseError>
   readonly getUser: (telegramId: number) => Effect.Effect<Option.Option<User>, DatabaseError>
   readonly getOrCreateUser: (telegramId: number, username?: string) => Effect.Effect<User, DatabaseError>
+  readonly getUserSettings: (
+    userId: number
+  ) => Effect.Effect<UserSettings, DatabaseError>
+  readonly updateUserSettings: (
+    userId: number,
+    patch: Partial<{
+      readonly timezone: string
+      readonly locale: string
+      readonly city: string | null
+      readonly country: string | null
+      readonly preferences: Record<string, any> | null
+    }>
+  ) => Effect.Effect<UserSettings, DatabaseError>
   readonly addIntegration: (
     userId: number,
     integrationType: string,
@@ -57,6 +71,121 @@ const makeUserRepository = Effect.gen(function* () {
   const encryption = yield* EncryptionService;
   const digestSettings = yield* DigestSettingsRepository;
 
+  const DEFAULT_USER_SETTINGS = {
+    timezone: "UTC" as const,
+    locale: "ru-RU" as const,
+  }
+
+  const ensureUserSettings = (
+    userId: number
+  ): Effect.Effect<UserSettings, DatabaseError> =>
+    Effect.tryPromise({
+      try: async () => {
+        const [existing] = await db
+          .select()
+          .from(userSettings)
+          .where(eq(userSettings.userId, userId))
+          .limit(1)
+
+        if (existing) {
+          return existing
+        }
+
+        await db.insert(userSettings).values({
+          userId,
+          timezone: DEFAULT_USER_SETTINGS.timezone,
+          locale: DEFAULT_USER_SETTINGS.locale,
+        })
+
+        const [created] = await db
+          .select()
+          .from(userSettings)
+          .where(eq(userSettings.userId, userId))
+          .limit(1)
+
+        if (!created) {
+          throw new Error("Failed to create user settings")
+        }
+
+        return created
+      },
+      catch: (error) => new DatabaseError("Failed to ensure user settings", error),
+    }).pipe(
+      Effect.flatMap((settings) =>
+        Effect.try({
+          try: () => settings as UserSettings,
+          catch: (error) =>
+            new DatabaseError(
+              "Invalid user settings data returned from database",
+              error
+            ),
+        })
+      )
+    )
+
+  const getUserSettings: UserRepository["getUserSettings"] = (userId) =>
+    ensureUserSettings(userId)
+
+  const updateUserSettings: UserRepository["updateUserSettings"] = (
+    userId,
+    patch
+  ) =>
+    ensureUserSettings(userId).pipe(
+      Effect.flatMap(() =>
+        Effect.tryPromise({
+          try: async () => {
+            const updatePayload: Record<string, unknown> = {
+              updatedAt: new Date(),
+            }
+
+            if (patch.timezone !== undefined) {
+              updatePayload.timezone = patch.timezone
+            }
+
+            if (patch.locale !== undefined) {
+              updatePayload.locale = patch.locale
+            }
+
+            if (patch.city !== undefined) {
+              updatePayload.city = patch.city
+            }
+
+            if (patch.country !== undefined) {
+              updatePayload.country = patch.country
+            }
+
+            if (patch.preferences !== undefined) {
+              updatePayload.preferences = patch.preferences
+            }
+
+            const [updated] = await db
+              .update(userSettings)
+              .set(updatePayload)
+              .where(eq(userSettings.userId, userId))
+              .returning()
+
+            if (!updated) {
+              throw new Error("Failed to update user settings")
+            }
+
+            return updated
+          },
+          catch: (error) =>
+            new DatabaseError("Failed to update user settings", error),
+        })
+      ),
+      Effect.flatMap((settings) =>
+        Effect.try({
+          try: () => settings as UserSettings,
+          catch: (error) =>
+            new DatabaseError(
+              "Invalid user settings data returned from database",
+              error
+            ),
+        })
+      )
+    )
+
   const createUser = (user: NewUser): Effect.Effect<User, DatabaseError> =>
     Effect.tryPromise({
       try: async () => {
@@ -75,9 +204,13 @@ const makeUserRepository = Effect.gen(function* () {
         })
       ),
       Effect.tap((createdUser) =>
-        digestSettings.ensureDefaultSettings(createdUser.telegramId).pipe(
-          Effect.catchAll(() => Effect.void)
-        )
+        Effect.all(
+          [
+            ensureUserSettings(createdUser.telegramId),
+            digestSettings.ensureDefaultSettings(createdUser.telegramId),
+          ],
+          { discard: true }
+        ).pipe(Effect.catchAll(() => Effect.void))
       )
     )
 
@@ -106,9 +239,13 @@ const makeUserRepository = Effect.gen(function* () {
         if (Option.isSome(userOption)) {
           const user = userOption.value
           // Update username if changed
-          const ensureDefaults = digestSettings
-            .ensureDefaultSettings(user.telegramId)
-            .pipe(Effect.catchAll(() => Effect.void));
+          const ensureDefaults = Effect.all(
+            [
+              ensureUserSettings(user.telegramId),
+              digestSettings.ensureDefaultSettings(user.telegramId),
+            ],
+            { discard: true }
+          ).pipe(Effect.catchAll(() => Effect.void))
 
           if (username && user.username !== username) {
             return Effect.tryPromise({
@@ -335,6 +472,8 @@ const makeUserRepository = Effect.gen(function* () {
     createUser,
     getUser,
     getOrCreateUser,
+    getUserSettings,
+    updateUserSettings,
     addIntegration,
     getIntegration,
     getUserIntegrations,

@@ -13,6 +13,30 @@ export const NewUserSchema = Schema.Struct({
   username: Schema.optional(Schema.String),
 })
 
+export const UserSettingsSchema = Schema.Struct({
+  userId: Schema.Number,
+  timezone: Schema.String,
+  locale: Schema.String,
+  city: Schema.optional(Schema.String),
+  country: Schema.optional(Schema.String),
+  preferences: Schema.optional(
+    Schema.Record({ key: Schema.String, value: Schema.Unknown })
+  ),
+  createdAt: Schema.Date,
+  updatedAt: Schema.Date,
+})
+
+export const NewUserSettingsSchema = Schema.Struct({
+  userId: Schema.Number,
+  timezone: Schema.optional(Schema.String),
+  locale: Schema.optional(Schema.String),
+  city: Schema.optional(Schema.String),
+  country: Schema.optional(Schema.String),
+  preferences: Schema.optional(
+    Schema.Record({ key: Schema.String, value: Schema.Unknown })
+  ),
+})
+
 // User Integration schemas
 export const UserIntegrationSchema = Schema.Struct({
   id: Schema.Number,
@@ -49,6 +73,12 @@ export const UserConfigSchema = Schema.Struct({
   userId: Schema.Union(Schema.String, Schema.Number),
   username: Schema.optional(Schema.String),
   integrations: Schema.Array(UserIntegrationConfigSchema),
+  settings: Schema.Struct({
+    timezone: Schema.String,
+    locale: Schema.String,
+    city: Schema.optional(Schema.String),
+    country: Schema.optional(Schema.String),
+  }),
   aiSettings: Schema.optional(Schema.Struct({
     model: Schema.optional(Schema.String),
     temperature: Schema.optional(Schema.Number),
@@ -115,6 +145,8 @@ export const NewJournalTagSchema = Schema.Struct({
 // Infer types
 export type User = Schema.Schema.Type<typeof UserSchema>
 export type NewUser = Schema.Schema.Type<typeof NewUserSchema>
+export type UserSettings = Schema.Schema.Type<typeof UserSettingsSchema>
+export type NewUserSettings = Schema.Schema.Type<typeof NewUserSettingsSchema>
 export type UserIntegration = Schema.Schema.Type<typeof UserIntegrationSchema>
 export type NewUserIntegration = Schema.Schema.Type<typeof NewUserIntegrationSchema>
 export type UserIntegrationConfig = Schema.Schema.Type<typeof UserIntegrationConfigSchema>
