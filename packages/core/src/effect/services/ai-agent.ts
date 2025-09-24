@@ -1,8 +1,20 @@
 import { Effect, Context, Layer, Schema, Cache, Duration } from "effect";
-import { generateText, type GenerateTextResult } from "ai";
+import {
+  Experimental_Agent as Agent,
+  generateObject,
+  NoObjectGeneratedError,
+  type CoreMessage,
+  type GenerateTextResult,
+} from "ai";
 import { openai } from "@ai-sdk/openai";
+import { z } from "zod";
 import { AIAgentError } from "../errors";
-import { IntegrationRegistry } from "./integration-registry";
+import {
+  IntegrationRegistry,
+  type DomainIntegrationTools,
+  type DomainAgentType,
+  type IntegrationToolsBundle,
+} from "./integration-registry";
 import { IntegrationError, ToolResultFormatter } from "../types/integrations";
 
 // AI Agent Configuration Schema
@@ -33,21 +45,13 @@ export interface AIAgent {
   readonly processMessage: (
     context: SimpleChatContext,
     conversationHistory?: readonly string[]
-  ) => Effect.Effect<
-    AIAgentResponse,
-    AIAgentError,
-    IntegrationRegistry
-  >;
+  ) => Effect.Effect<AIAgentResponse, AIAgentError, IntegrationRegistry>;
 
   readonly processText: (
     userId: string | number,
     text: string,
     conversationHistory?: readonly string[]
-  ) => Effect.Effect<
-    AIAgentResponse,
-    AIAgentError,
-    IntegrationRegistry
-  >;
+  ) => Effect.Effect<AIAgentResponse, AIAgentError, IntegrationRegistry>;
 }
 
 export interface AIAgentResponse {
@@ -59,10 +63,79 @@ export interface AIAgentResponse {
 // Service tag
 export const AIAgent = Context.GenericTag<AIAgent>("@services/AIAgent");
 
-// Implementation
+type AgentExecutionKind = DomainAgentType | "fallback";
+
+interface AgentExecution {
+  readonly kind: AgentExecutionKind;
+  readonly result: GenerateTextResult<any, any>;
+  readonly toolFormatters: Record<string, ToolResultFormatter>;
+  readonly toolProgressMessages: Record<string, string>;
+}
+
+interface DomainAgentDefinition {
+  readonly description: string;
+  readonly buildSystemPrompt: (
+    context: SimpleChatContext,
+    toolNames: ReadonlyArray<string>
+  ) => string;
+}
+
+const DEFAULT_AGENT_FALLBACK_ORDER: readonly DomainAgentType[] = [
+  "journal",
+  "tasks",
+  "calendar",
+  "digest",
+];
+
+const domainAgentDefinitions: Record<DomainAgentType, DomainAgentDefinition> = {
+  journal: {
+    description:
+      "Создаёт и анализирует записи дневника, определяет настроение и подсказывает теги.",
+    buildSystemPrompt: (context, toolNames) => {
+      const interactionHint = buildInteractionHint(context);
+      const toolList = toolNames.length
+        ? `Доступные инструменты: ${toolNames.join(", ")}.`
+        : "Инструментов нет, отвечай текстом, но не обещай действий.";
+      return `Ты — агент дневника TeleDrug. Твоя задача — определять, подходит ли сообщение для дневниковой записи, и при необходимости вызывать инструменты, чтобы сохранить запись и подсказать дополнительные действия. Отвечай на русском языке, лаконично, с заботливым тоном. Всегда подтверждай сохранение записи, если она создана инструментом. Если запись не подходит, дай короткий ответ и пояснение. ${toolList} ${interactionHint}`.trim();
+    },
+  },
+  tasks: {
+    description:
+      "Управляет задачами пользователя: создаёт, обновляет, завершает и показывает списки.",
+    buildSystemPrompt: (context, toolNames) => {
+      const interactionHint = buildInteractionHint(context);
+      const toolList = toolNames.length
+        ? `Доступные инструменты: ${toolNames.join(", ")}.`
+        : "Инструментов нет, можешь только дать совет или попросить уточнение.";
+      return `Ты — агент задач TeleDrug. Управляй списком задач пользователя, помогай создавать, обновлять, завершать и переносить задачи. Говори по-русски, будь кратким и вежливым. Если инструментов нет, сообщи пользователю, что пока не можешь выполнить действие и предложи альтернативу. ${toolList} ${interactionHint}`.trim();
+    },
+  },
+  calendar: {
+    description:
+      "Работает с календарём: показывает события и создаёт новые встречи пользователя.",
+    buildSystemPrompt: (context, toolNames) => {
+      const interactionHint = buildInteractionHint(context);
+      const toolList = toolNames.length
+        ? `Доступные инструменты: ${toolNames.join(", ")}.`
+        : "Инструментов нет: объясни пользователю, что календарь недоступен.";
+      return `Ты — агент календаря TeleDrug. Помогай планировать расписание: показывай ближайшие события и создавай новые. Всегда уточняй необходимые детали (дата, время, описание) перед вызовом инструментов. Отвечай по-русски, структурируй информацию. ${toolList} ${interactionHint}`.trim();
+    },
+  },
+  digest: {
+    description:
+      "Настраивает ежедневный дайджест: модули, погода, валюты и т.п.",
+    buildSystemPrompt: (context, toolNames) => {
+      const interactionHint = buildInteractionHint(context);
+      const toolList = toolNames.length
+        ? `Доступные инструменты: ${toolNames.join(", ")}.`
+        : "Инструментов нет — дай совет или попроси использовать команду позже.";
+      return `Ты — агент дайджеста TeleDrug. Управляй настройками утреннего дайджеста, включай и отключай модули, обновляй параметры погоды и валют. Отвечай на русском, будь очень краток и конкретен. ${toolList} ${interactionHint}`.trim();
+    },
+  },
+};
+
 const makeAIAgent = (config: AIAgentConfig) =>
   Effect.gen(function* () {
-    // Validate configuration
     const validatedConfig = yield* Schema.decodeUnknown(AIAgentConfigSchema)(
       config
     ).pipe(
@@ -75,7 +148,6 @@ const makeAIAgent = (config: AIAgentConfig) =>
       )
     );
 
-    // Set OpenAI API key globally (required by Vercel AI SDK)
     process.env.OPENAI_API_KEY = validatedConfig.openaiApiKey;
 
     const processMessage = (
@@ -83,127 +155,162 @@ const makeAIAgent = (config: AIAgentConfig) =>
       conversationHistory: readonly string[] = []
     ): Effect.Effect<AIAgentResponse, AIAgentError, IntegrationRegistry> =>
       Effect.gen(function* () {
-        try {
-          yield* Effect.sync(() =>
-            console.log(
-              `🤖 Processing message for user ${context.userId}: "${context.messageContent}"`
-            )
-          );
+        const validatedContext = yield* Schema.decodeUnknown(
+          SimpleChatContextSchema
+        )(context).pipe(
+          Effect.mapError(
+            (error) =>
+              new AIAgentError({
+                message: "Invalid chat context",
+                cause: error,
+              })
+          )
+        );
 
-          // Validate context
-          const validatedContext = yield* Schema.decodeUnknown(
-            SimpleChatContextSchema
-          )(context).pipe(
+        yield* Effect.sync(() =>
+          console.log(
+            `🤖 Orchestrating message for user ${validatedContext.userId}: "${validatedContext.messageContent}"`
+          )
+        );
+
+        const baseMessages = buildMessages(
+          validatedContext.messageContent,
+          conversationHistory
+        );
+
+        const integrationRegistry = yield* IntegrationRegistry;
+        const domainTools = yield* integrationRegistry
+          .getDomainToolsForUser(
+            validatedContext.userId,
+            validatedContext.interactionType || "TEXT"
+          )
+          .pipe(
             Effect.mapError(
-              (error) =>
+              (registryError: IntegrationError) =>
                 new AIAgentError({
-                  message: "Invalid chat context",
-                  cause: error,
+                  message: `Failed to prepare integrations for user ${validatedContext.userId}`,
+                  cause: registryError,
                 })
             )
           );
 
-          // Build system prompt
-          const systemPrompt = buildSystemPrompt(validatedContext);
+        const availableAgents = selectAvailableAgents(domainTools);
 
-          // Build messages array
-          const messages = buildMessages(
-            systemPrompt,
-            validatedContext.messageContent,
-            conversationHistory
-          );
+        if (availableAgents.length === 0) {
+          console.log("📭 No domain agents with tools available for this user");
+        } else {
+          console.log("🧭 Available domain agents:");
+          for (const agent of availableAgents) {
+            const toolsLabel = agent.tools.length
+              ? agent.tools.join(", ")
+              : "<нет инструментов>";
+            console.log(`  • ${agent.kind}: ${toolsLabel}`);
+          }
+        }
 
-          // Select model
-          const model = openai(validatedConfig.model || "gpt-5-nano");
+        const model = openai(validatedConfig.model || "gpt-5-nano");
 
-          yield* Effect.sync(() =>
-            console.log(
-              `📡 Calling OpenAI API with model: ${
-                validatedConfig.model || "gpt-5-nano"
-              }`
-            )
-          );
-
-          // Get tools from integration registry
-          const integrationRegistry = yield* IntegrationRegistry;
-          const userTools = yield* integrationRegistry
-            .getToolsForUser(
-              validatedContext.userId,
-              validatedContext.interactionType || "TEXT"
-            )
-            .pipe(
-              Effect.mapError(
-                (registryError: IntegrationError) =>
-                  new AIAgentError({
-                    message: `Failed to prepare integrations for user ${validatedContext.userId}`,
-                    cause: registryError,
-                  })
-              )
-            );
-
-          yield* Effect.sync(() =>
-            console.log(
-              `🔧 Found ${
-                Object.keys(userTools.tools).length
-              } tools for interaction type: ${
-                validatedContext.interactionType || "TEXT"
-              }`
-            )
-          );
-
-          // Call OpenAI API with tools - they execute automatically in AI SDK v5
-          const hasTools = Object.keys(userTools.tools).length > 0;
-          const result = yield* Effect.tryPromise({
-            try: () =>
-              generateText({
-                model,
-                messages,
-                tools: hasTools ? userTools.tools : undefined,
-                toolChoice: hasTools ? "required" : undefined,
-              }),
-            catch: (cause) =>
-              new AIAgentError({
-                message: "OpenAI generateText call failed",
-                cause,
-              }),
-          });
-
-          // Tools уже выполнены автоматически, просто логируем
-          if (result.toolCalls && result.toolCalls.length > 0) {
-            yield* Effect.sync(() =>
-              console.log(`🚀 AI called ${result.toolCalls.length} tools`)
-            );
-
-            for (const toolCall of result.toolCalls) {
+        const routedAgents = yield* routeAgents(
+          model,
+          validatedConfig,
+          availableAgents,
+          validatedContext,
+          conversationHistory
+        ).pipe(
+          Effect.catchAll((error) =>
+            Effect.gen(function* () {
               yield* Effect.sync(() =>
-                console.log(`✅ Tool ${toolCall.toolName} executed successfully`)
+                console.warn(
+                  "⚠️ Agent routing failed, using fallback order",
+                  error
+                )
               );
-            }
-          }
-
-          if (result.toolResults && result.toolResults.length > 0) {
-            yield* Effect.sync(() =>
-              console.log(`📊 Received ${result.toolResults.length} tool results`)
-            );
-          }
-
-          yield* Effect.sync(() =>
-            console.log(`✅ AI response: ${result.text.substring(0, 100)}...`)
-          );
-
-          return {
-            result,
-            toolFormatters: userTools.formatters,
-            toolProgressMessages: userTools.progressMessages,
-          } satisfies AIAgentResponse;
-        } catch (cause) {
-          return yield* Effect.fail(
-            new AIAgentError({
-              message: `Failed to process message for user ${context.userId}`,
-              cause,
+              return DEFAULT_AGENT_FALLBACK_ORDER.slice();
             })
+          )
+        );
+
+        const executionOrder = routedAgents.length
+          ? routedAgents
+          : DEFAULT_AGENT_FALLBACK_ORDER.slice();
+
+        if (executionOrder.length > 0) {
+          console.log(
+            `🛣️ Agent execution order: ${executionOrder.join(" → ")}`
+          );
+        } else {
+          console.log(
+            "🛣️ Agent execution order: <empty> — falling back to defaults"
           );
         }
+
+        let chosenExecution: AgentExecution | undefined;
+
+        for (const agentKind of executionOrder) {
+          const definition = domainAgentDefinitions[agentKind];
+          const toolsBundle = domainTools[agentKind];
+
+          if (!definition || !toolsBundle) {
+            continue;
+          }
+
+          console.log(`🚀 Executing domain agent: ${agentKind}`);
+
+          const attempt = yield* runDomainAgent(
+            agentKind,
+            definition,
+            validatedConfig,
+            validatedContext,
+            baseMessages,
+            toolsBundle
+          ).pipe(Effect.either);
+
+          if (attempt._tag === "Left") {
+            yield* Effect.sync(() =>
+              console.error(
+                `❌ Domain agent ${agentKind} failed:`,
+                attempt.left
+              )
+            );
+            continue;
+          }
+
+          const execution = attempt.right;
+          const resultText = execution.result.text?.trim();
+          const hasToolResults =
+            execution.result.toolResults &&
+            execution.result.toolResults.length > 0;
+
+          chosenExecution = execution;
+
+          if ((resultText && resultText.length > 0) || hasToolResults) {
+            yield* Effect.sync(() =>
+              console.log(`✅ Agent ${agentKind} produced a response`)
+            );
+            break;
+          }
+
+          yield* Effect.sync(() =>
+            console.log(
+              `ℹ️ Agent ${agentKind} did not provide actionable output, moving to next`
+            )
+          );
+        }
+
+        if (!chosenExecution) {
+          chosenExecution = yield* runFallbackAgent(
+            model,
+            validatedConfig,
+            validatedContext,
+            baseMessages
+          );
+        }
+
+        return {
+          result: chosenExecution.result,
+          toolFormatters: chosenExecution.toolFormatters,
+          toolProgressMessages: chosenExecution.toolProgressMessages,
+        } satisfies AIAgentResponse;
       });
 
     const processText = (
@@ -213,7 +320,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
     ): Effect.Effect<AIAgentResponse, AIAgentError, IntegrationRegistry> => {
       const context: SimpleChatContext = {
         userId,
-        chatId: userId, // Use userId as chatId for simplicity
+        chatId: userId,
         messageContent: text,
         interactionType: "TEXT",
       };
@@ -227,54 +334,206 @@ const makeAIAgent = (config: AIAgentConfig) =>
     });
   });
 
-// Helper function to build system prompt
-const buildSystemPrompt = (context: SimpleChatContext): string => {
-  const interactionType = context.interactionType || "TEXT";
-
-  let basePrompt = `Ты - AI ассистент с именем TeleDrug.
-Отвечай на русском языке.
-Будь вежливым, полезным и профессиональным.
-Твои ответы должны быть краткими и по существу.
-
-Если сообщение пользователя похоже на личную дневниковую запись (итоги дня, мысли, эмоции) и в нём нет явных указаний занести событие в календарь или задачу с конкретной датой/временем — обязательно вызови инструмент createJournalEntry и передай туда оригинальный текст через поле content.
-Не создавай запись, если пользователь просит выполнить действие, планирует событие или даёт команды, связанные с календарём/задачами.
-После успешного вызова инструмента используй его результат, чтобы подтвердить сохранение записи.`;
-
-  // Add interaction-specific instructions
-  switch (interactionType) {
+const buildInteractionHint = (context: SimpleChatContext): string => {
+  switch (context.interactionType) {
     case "VOICE":
-      basePrompt += `\n\nПользователь отправил голосовое сообщение.`;
-      break;
+      return "Пользователь прислал голосовое сообщение (оно уже расшифровано в текст).";
     case "IMAGE":
-      basePrompt += `\n\nПользователь отправил изображение.`;
-      break;
+      return "Пользователь прислал изображение (описание получено в тексте).";
     case "FORWARD":
-      basePrompt += `\n\nПользователь переслал сообщение.`;
-      break;
+      return "Пользователь переслал сообщение из другого чата.";
     default:
-      basePrompt += `\n\nПользователь отправил текстовое сообщение.`;
+      return "Пользователь отправил текстовое сообщение.";
   }
-
-  return basePrompt;
 };
 
-// Helper function to build messages array
+const selectAvailableAgents = (
+  domainTools: DomainIntegrationTools
+): Array<{ kind: DomainAgentType; description: string; tools: string[] }> =>
+  Object.entries(domainAgentDefinitions)
+    .map(([kind, definition]) => {
+      const bundle = domainTools[kind as DomainAgentType];
+      const toolNames = bundle ? Object.keys(bundle.tools) : [];
+      if (toolNames.length === 0) {
+        return undefined;
+      }
+      return {
+        kind: kind as DomainAgentType,
+        description: definition.description,
+        tools: toolNames,
+      };
+    })
+    .filter(
+      (
+        value
+      ): value is {
+        kind: DomainAgentType;
+        description: string;
+        tools: string[];
+      } => Boolean(value)
+    );
+
+const routeAgents = (
+  model: ReturnType<typeof openai>,
+  config: AIAgentConfig,
+  availableAgents: ReadonlyArray<{
+    kind: DomainAgentType;
+    description: string;
+    tools: string[];
+  }>,
+  context: SimpleChatContext,
+  conversationHistory: readonly string[]
+): Effect.Effect<ReadonlyArray<DomainAgentType>, AIAgentError> => {
+  if (availableAgents.length === 0) {
+    return Effect.succeed([]);
+  }
+
+  const agentNames = availableAgents.map((agent) => agent.kind);
+  const agentEnum = z.enum(
+    agentNames as [DomainAgentType, ...DomainAgentType[]]
+  );
+  const schema = z.object({
+    agents: z.array(agentEnum).max(Math.min(agentNames.length, 3)).default([]),
+    reasoning: z.string().optional(),
+  });
+
+  const systemPromptLines = availableAgents.map((agent) => {
+    const tools = agent.tools.length
+      ? agent.tools.join(", ")
+      : "нет инструментов";
+    return `- ${agent.kind}: ${agent.description} (инструменты: ${tools}).`;
+  });
+
+  const historySnippet = conversationHistory
+    .slice(-5)
+    .map((item, index) => `${index + 1}. ${item}`)
+    .join("\n");
+
+  return Effect.tryPromise({
+    try: async () => {
+      try {
+        const { object } = await generateObject({
+          model,
+          schema,
+          messages: [
+            {
+              role: "system",
+              content:
+                "Ты — маршрутизатор TeleDrug. Выбирай, какие специализированные агенты должны обработать сообщение пользователя. Верни массив agents в порядке вызова агентов. Избегай агентов без инструментов, если нет особой причины." +
+                "\nДоступные агенты:\n" +
+                systemPromptLines.join("\n"),
+            },
+            {
+              role: "user",
+              content: `Сообщение пользователя: ${
+                context.messageContent
+              }\nТип взаимодействия: ${
+                context.interactionType
+              }\nПоследние сообщения:\n${historySnippet || "(нет)"}`,
+            },
+          ],
+          maxOutputTokens: config.maxTokens,
+        });
+
+        const selectedAgents = (object.agents || []).filter((agent) =>
+          agentNames.includes(agent)
+        );
+        return selectedAgents as ReadonlyArray<DomainAgentType>;
+      } catch (cause) {
+        if (NoObjectGeneratedError.isInstance?.(cause)) {
+          return [] as ReadonlyArray<DomainAgentType>;
+        }
+        throw cause;
+      }
+    },
+    catch: (cause) =>
+      new AIAgentError({
+        message: "Failed to route message across domain agents",
+        cause,
+      }),
+  });
+};
+
+const runDomainAgent = (
+  kind: DomainAgentType,
+  definition: DomainAgentDefinition,
+  config: AIAgentConfig,
+  context: SimpleChatContext,
+  baseMessages: ReadonlyArray<CoreMessage>,
+  bundle: IntegrationToolsBundle
+): Effect.Effect<AgentExecution, AIAgentError> =>
+  Effect.gen(function* () {
+    const toolNames = Object.keys(bundle.tools);
+    const systemPrompt = definition.buildSystemPrompt(context, toolNames);
+    const agent = new Agent({
+      model: openai(config.model || "gpt-5-nano"),
+      ...(toolNames.length > 0
+        ? { tools: bundle.tools, toolChoice: "required" }
+        : {}),
+      maxOutputTokens: config.maxTokens,
+    });
+
+    const result = yield* Effect.tryPromise({
+      try: () =>
+        agent.generate({
+          system: systemPrompt,
+          messages: [...baseMessages],
+        }),
+      catch: (cause) =>
+        new AIAgentError({
+          message: `Domain agent ${kind} failed to generate response`,
+          cause,
+        }),
+    });
+
+    return {
+      kind,
+      result,
+      toolFormatters: bundle.formatters,
+      toolProgressMessages: bundle.progressMessages,
+    } satisfies AgentExecution;
+  });
+
+const runFallbackAgent = (
+  model: ReturnType<typeof openai>,
+  config: AIAgentConfig,
+  context: SimpleChatContext,
+  baseMessages: ReadonlyArray<CoreMessage>
+): Effect.Effect<AgentExecution, AIAgentError> =>
+  Effect.gen(function* () {
+    const agent = new Agent({
+      model,
+      maxOutputTokens: config.maxTokens,
+    });
+
+    const result = yield* Effect.tryPromise({
+      try: () =>
+        agent.generate({
+          system:
+            "Ты — ассистент TeleDrug. У пользователя недоступны специализированные инструменты, поэтому ответь кратко и дружелюбно, по-русски, предложи общее решение или попроси уточнить запрос.",
+          messages: [...baseMessages],
+        }),
+      catch: (cause) =>
+        new AIAgentError({
+          message: "Fallback assistant failed",
+          cause,
+        }),
+    });
+
+    return {
+      kind: "fallback",
+      result,
+      toolFormatters: {},
+      toolProgressMessages: {},
+    } satisfies AgentExecution;
+  });
+
 const buildMessages = (
-  systemPrompt: string,
   currentMessage: string,
   conversationHistory: readonly string[]
-): Array<{ role: "system" | "user" | "assistant"; content: string }> => {
-  const messages: Array<{
-    role: "system" | "user" | "assistant";
-    content: string;
-  }> = [
-    {
-      role: "system",
-      content: systemPrompt,
-    },
-  ];
+): Array<CoreMessage> => {
+  const messages: Array<CoreMessage> = [];
 
-  // Add conversation history (last 10 messages to stay within limits)
   const recentHistory = conversationHistory.slice(-10);
   for (let i = 0; i < recentHistory.length; i++) {
     const content = recentHistory[i];
@@ -286,7 +545,6 @@ const buildMessages = (
     }
   }
 
-  // Add current message
   messages.push({
     role: "user",
     content: currentMessage,
@@ -295,7 +553,6 @@ const buildMessages = (
   return messages;
 };
 
-// Factory for creating user-specific AI agents
 export interface AIAgentFactory {
   readonly getOrCreateAgent: (
     userId: string | number
@@ -314,17 +571,15 @@ export const AIAgentFactory = Context.GenericTag<AIAgentFactory>(
   "@services/AIAgentFactory"
 );
 
-// AI Agent Factory implementation with Effect Cache
 const makeAIAgentFactory = (baseConfig: AIAgentConfig) =>
   Effect.gen(function* () {
-    // Create Effect Cache with TTL and capacity limits
     const agentCache = yield* Cache.make({
-      capacity: 100, // Maximum 100 cached agents
-      timeToLive: Duration.hours(1), // Agents expire after 1 hour
+      capacity: 100,
+      timeToLive: Duration.hours(1),
       lookup: (userId: string | number) =>
         Effect.gen(function* () {
           yield* Effect.sync(() =>
-            console.log(`🔨 Creating new AI agent for user: ${userId}`)
+            console.log(`🔨 Creating orchestrator AI agent for user: ${userId}`)
           );
 
           const config: AIAgentConfig = {
@@ -332,17 +587,16 @@ const makeAIAgentFactory = (baseConfig: AIAgentConfig) =>
             userId,
           };
 
-          // Create agent for this user
           const agent = yield* makeAIAgent(config);
 
           yield* Effect.sync(() =>
-            console.log(`✅ Created AI agent for user: ${userId}`)
+            console.log(`✅ Created orchestrator agent for user: ${userId}`)
           );
           return agent;
         }).pipe(
           Effect.tap(() =>
             Effect.sync(() =>
-              console.log(`📦 Cached agent for user: ${userId}`)
+              console.log(`📦 Cached orchestrator agent for user: ${userId}`)
             )
           )
         ),
@@ -353,10 +607,11 @@ const makeAIAgentFactory = (baseConfig: AIAgentConfig) =>
       userConfig: Partial<AIAgentConfig> = {}
     ): Effect.Effect<AIAgent, AIAgentError, IntegrationRegistry> =>
       Effect.gen(function* () {
-        // For custom configs, create without caching
         if (Object.keys(userConfig).length > 0) {
           yield* Effect.sync(() =>
-            console.log(`🎨 Creating custom AI agent for user: ${userId}`)
+            console.log(
+              `🎨 Creating custom orchestrator agent for user: ${userId}`
+            )
           );
           const config: AIAgentConfig = {
             ...baseConfig,
@@ -366,7 +621,6 @@ const makeAIAgentFactory = (baseConfig: AIAgentConfig) =>
           return yield* makeAIAgent(config);
         }
 
-        // Use cache for default configs
         return yield* agentCache.get(userId);
       });
 
@@ -376,25 +630,25 @@ const makeAIAgentFactory = (baseConfig: AIAgentConfig) =>
       Effect.gen(function* () {
         const agent = yield* agentCache.get(userId);
 
-        // Cache.get already handles the cache miss case
         const cacheStats = yield* agentCache.cacheStats;
         yield* Effect.sync(() =>
           console.log(
-            `📊 Cache stats - Hits: ${cacheStats.hits}, Misses: ${cacheStats.misses}, Size: ${cacheStats.size}`
+            `📊 Orchestrator cache stats - Hits: ${cacheStats.hits}, Misses: ${cacheStats.misses}, Size: ${cacheStats.size}`
           )
         );
 
         return agent;
       });
 
-    // Optional: Add cache management methods
     const invalidateUser = (userId: string | number) =>
       agentCache
         .invalidate(userId)
         .pipe(
           Effect.tap(() =>
             Effect.sync(() =>
-              console.log(`🗑️ Invalidated cache for user: ${userId}`)
+              console.log(
+                `🗑️ Invalidated orchestrator cache for user: ${userId}`
+              )
             )
           )
         );
@@ -402,7 +656,7 @@ const makeAIAgentFactory = (baseConfig: AIAgentConfig) =>
     const clearCache = () =>
       agentCache.invalidateAll.pipe(
         Effect.tap(() =>
-          Effect.sync(() => console.log(`🧹 Cleared all agent cache`))
+          Effect.sync(() => console.log(`🧹 Cleared orchestrator agent cache`))
         )
       );
 
@@ -414,13 +668,11 @@ const makeAIAgentFactory = (baseConfig: AIAgentConfig) =>
     });
   });
 
-// Live layers
 export const AIAgentLive = (config: AIAgentConfig) =>
   Layer.effect(AIAgent, makeAIAgent(config));
 
 export const AIAgentFactoryLive = (baseConfig: AIAgentConfig) =>
   Layer.effect(AIAgentFactory, makeAIAgentFactory(baseConfig));
 
-// Export schemas and types for use in other modules
 export { AIAgentConfigSchema, SimpleChatContextSchema };
 export type { AIAgentConfig, SimpleChatContext };
