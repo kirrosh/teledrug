@@ -174,3 +174,26 @@ export type JournalEntry = typeof journalEntries.$inferSelect;
 export type NewJournalEntry = typeof journalEntries.$inferInsert;
 export type JournalTag = typeof journalTags.$inferSelect;
 export type NewJournalTag = typeof journalTags.$inferInsert;
+
+// Tasks schema
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: serial("id").primaryKey(),
+    userId: bigint("user_id", { mode: "number" })
+      .references(() => users.telegramId, { onDelete: "cascade" })
+      .notNull(),
+    title: text("title").notNull(),
+    status: varchar("status", { length: 20 }).default("todo").notNull(),
+    dueAt: timestamp("due_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    userStatusIdx: index("idx_tasks_user_status").on(table.userId, table.status),
+    userDueIdx: index("idx_tasks_user_due").on(table.userId, table.dueAt),
+  })
+);
+
+export type Task = typeof tasks.$inferSelect;
+export type NewTask = typeof tasks.$inferInsert;

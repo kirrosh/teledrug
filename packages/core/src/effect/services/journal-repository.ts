@@ -80,9 +80,13 @@ const makeJournalRepository = Effect.sync(() => {
         db.transaction(async (trx) => {
           const tags = normalizeTags(analysis.tags ?? []);
 
+          const entryDateIso = entryDate
+            ? entryDate.toISOString().slice(0, 10)
+            : undefined;
+
           const entryValues: NewJournalEntry = {
             userId,
-            entryDate,
+            ...(entryDateIso ? { entryDate: entryDateIso } : {}),
             title: analysis.title,
             content,
             mood: analysis.mood,

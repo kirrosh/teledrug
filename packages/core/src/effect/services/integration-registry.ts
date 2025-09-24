@@ -1,4 +1,4 @@
-import { Effect, Context, Layer, Console } from "effect";
+import { Effect, Context, Layer } from "effect";
 import { Tool as AITool } from "ai";
 import {
   InteractionType,
@@ -15,6 +15,8 @@ import { DigestSettingsRepository } from "./digest-settings";
 import { createJournalTools } from "../journal/tools";
 import { JournalAnalysisService } from "./journal-analysis";
 import { JournalRepository } from "./journal-repository";
+import { createTaskTools } from "../tasks/tools";
+import { TaskRepository, TaskRepositoryLive } from "./task-repository";
 
 export interface IntegrationToolsBundle {
   readonly tools: Record<string, AITool>;
@@ -53,13 +55,14 @@ const makeIntegrationRegistry = Effect.gen(function* () {
   const digestSettings = yield* DigestSettingsRepository;
   const journalAnalysis = yield* JournalAnalysisService;
   const journalRepository = yield* JournalRepository;
+  // TaskRepository is lightweight; we'll provide its live layer on demand
 
-  yield* Console.log("🔧 Initializing Integration Registry...");
+  yield* Effect.sync(() => console.log("🔧 Initializing Integration Registry..."));
 
   const getToolsForUser = (
     userId: string | number,
     interactionType: InteractionType
-  ) =>
+  ): Effect.Effect<IntegrationToolsBundle, IntegrationError> =>
     Effect.gen(function* () {
       const numericUserId = yield* Effect.try({
         try: () => toNumericUserId(userId),
@@ -70,8 +73,10 @@ const makeIntegrationRegistry = Effect.gen(function* () {
           }),
       });
 
-      yield* Console.log(
-        `🔧 Registry: loading tools for user ${numericUserId} (${interactionType})`
+      yield* Effect.sync(() =>
+        console.log(
+          `🔧 Registry: loading tools for user ${numericUserId} (${interactionType})`
+        )
       );
 
       const digestToolsBundle = yield* createDigestTools(numericUserId).pipe(
@@ -88,10 +93,22 @@ const makeIntegrationRegistry = Effect.gen(function* () {
       const journalToolsBundle = yield* createJournalTools(numericUserId).pipe(
         Effect.provideService(JournalAnalysisService, journalAnalysis),
         Effect.provideService(JournalRepository, journalRepository),
+        Effect.provide(TaskRepositoryLive),
         Effect.mapError(
           (cause) =>
             new IntegrationError({
               message: "Failed to prepare journal tools",
+              cause,
+            })
+        )
+      );
+
+      const taskToolsBundle = yield* createTaskTools(numericUserId).pipe(
+        Effect.provide(TaskRepositoryLive),
+        Effect.mapError(
+          (cause) =>
+            new IntegrationError({
+              message: "Failed to prepare task tools",
               cause,
             })
         )
@@ -112,26 +129,33 @@ const makeIntegrationRegistry = Effect.gen(function* () {
       const tools: Record<string, AITool> = {
         ...digestToolsBundle.tools,
         ...journalToolsBundle.tools,
+        ...taskToolsBundle.tools,
       };
       const formatters: Record<string, ToolResultFormatter> = {
         ...digestToolsBundle.formatters,
         ...journalToolsBundle.formatters,
+        ...taskToolsBundle.formatters,
       };
       const progressMessages: Record<string, string> = {
         ...digestToolsBundle.progressMessages,
         ...journalToolsBundle.progressMessages,
+        ...taskToolsBundle.progressMessages,
       };
 
       if (integrations.length === 0) {
-        yield* Console.log(
-          `📭 Registry: user ${numericUserId} has no external integrations`
+        yield* Effect.sync(() =>
+          console.log(
+            `📭 Registry: user ${numericUserId} has no external integrations`
+          )
         );
       }
 
       for (const { integration, credentials } of integrations) {
         if (!integration.enabled) {
-          yield* Console.log(
-            `⏭️ Registry: integration ${integration.integrationType} disabled for user ${numericUserId}`
+          yield* Effect.sync(() =>
+            console.log(
+              `⏭️ Registry: integration ${integration.integrationType} disabled for user ${numericUserId}`
+            )
           );
           continue;
         }
@@ -139,8 +163,10 @@ const makeIntegrationRegistry = Effect.gen(function* () {
         switch (integration.integrationType) {
           case "YandexCalendar": {
             if (interactionType !== "TEXT" && interactionType !== "VOICE") {
-              yield* Console.log(
-                `⚖️ Registry: skipping YandexCalendar tools for unsupported interaction type ${interactionType}`
+              yield* Effect.sync(() =>
+                console.log(
+                  `⚖️ Registry: skipping YandexCalendar tools for unsupported interaction type ${interactionType}`
+                )
               );
               break;
             }
@@ -159,25 +185,31 @@ const makeIntegrationRegistry = Effect.gen(function* () {
             if (yandexTools.progressMessages) {
               Object.assign(progressMessages, yandexTools.progressMessages);
             }
-            yield* Console.log(
-              `✅ Registry: added ${
-                Object.keys(yandexTools.tools).length
-              } YandexCalendar tool(s)`
+            yield* Effect.sync(() =>
+              console.log(
+                `✅ Registry: added ${
+                  Object.keys(yandexTools.tools).length
+                } YandexCalendar tool(s)`
+              )
             );
             break;
           }
           default: {
-            yield* Console.log(
-              `ℹ️ Registry: no Effect implementation for integration ${integration.integrationType}`
+            yield* Effect.sync(() =>
+              console.log(
+                `ℹ️ Registry: no Effect implementation for integration ${integration.integrationType}`
+              )
             );
           }
         }
       }
 
-      yield* Console.log(
-        `✅ Registry: prepared ${
-          Object.keys(tools).length
-        } tool(s) for user ${numericUserId}`
+      yield* Effect.sync(() =>
+        console.log(
+          `✅ Registry: prepared ${
+            Object.keys(tools).length
+          } tool(s) for user ${numericUserId}`
+        )
       );
 
       return {

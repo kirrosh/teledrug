@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import type { ModuleSettingEntry } from "../services/digest-settings";
 
-export type DigestModuleId = "weather" | "fx" | "calendar";
+export type DigestModuleId = "weather" | "fx" | "calendar" | "tasks";
 
 export interface DigestModuleContext {
   readonly userId: number;
@@ -13,10 +13,10 @@ export interface DigestModuleResult {
   readonly text: string | null;
 }
 
-export interface DigestModuleImpl {
+export interface DigestModuleImpl<R = never> {
   readonly id: DigestModuleId;
   readonly fetch: (
     context: DigestModuleContext,
     settings: ModuleSettingEntry | undefined
-  ) => Effect.Effect<string | null, never>;
+  ) => Effect.Effect<string | null, never, R>;
 }

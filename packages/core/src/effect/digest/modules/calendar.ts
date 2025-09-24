@@ -1,10 +1,14 @@
-import { Effect, Console } from "effect";
+import { Effect } from "effect";
 import type { DigestModuleImpl } from "../types";
 import type { ModuleSettingEntry } from "../../services/digest-settings";
-import { UserRepository } from "../../services/user-repository";
+import {
+  UserRepository as UserRepositoryTag,
+  type UserRepository as UserRepositoryService,
+} from "../../services/user-repository";
 import {
   fetchEventsForRange,
   type CalendarEvent,
+  type YandexCredentials,
 } from "../../integrations/yandex-calendar";
 
 const timeFormatter = new Intl.DateTimeFormat("ru-RU", {
@@ -33,7 +37,19 @@ const formatEventLine = (event: CalendarEvent) => {
   return `• ${timeRange} — ${event.summary}${location}`;
 };
 
-export const CalendarDigestModule: DigestModuleImpl = {
+const isYandexCredentials = (value: unknown): value is YandexCredentials => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const raw = value as Record<string, unknown>;
+  return (
+    typeof raw.username === "string" &&
+    typeof raw.password === "string" &&
+    typeof raw.calendarUrl === "string"
+  );
+};
+
+export const CalendarDigestModule: DigestModuleImpl<UserRepositoryService> = {
   id: "calendar",
   fetch: (context, entry) =>
     Effect.gen(function* () {
@@ -41,10 +57,23 @@ export const CalendarDigestModule: DigestModuleImpl = {
         return null;
       }
 
-      const userRepository = yield* UserRepository;
-      const integrations = yield* userRepository.getAllDecryptedIntegrations(
-        context.userId
-      );
+      const userRepository = yield* UserRepositoryTag;
+      const integrations = yield* userRepository
+        .getAllDecryptedIntegrations(context.userId)
+        .pipe(
+          Effect.catchAll((error) =>
+            Effect.sync(() => {
+              console.error(
+                "❌ Failed to load user integrations for calendar module:",
+                error
+              );
+              return [] as Array<{
+                integration: { integrationType: string; enabled: boolean };
+                credentials: unknown;
+              }>;
+            })
+          )
+        );
 
       const yandexCredentials = integrations
         .filter(
@@ -52,7 +81,8 @@ export const CalendarDigestModule: DigestModuleImpl = {
             entry.integration.integrationType === "YandexCalendar" &&
             entry.integration.enabled
         )
-        .map((entry) => entry.credentials);
+        .map((entry) => entry.credentials)
+        .filter(isYandexCredentials);
 
       if (yandexCredentials.length === 0) {
         return "📅 Интеграция с календарём не настроена";
@@ -68,9 +98,10 @@ export const CalendarDigestModule: DigestModuleImpl = {
           fetchEventsForRange(credentials, start, end)
         ).pipe(
           Effect.catchAll((error) =>
-            Console.error("❌ Failed to fetch calendar events:", error).pipe(
-              Effect.flatMap(() => Effect.succeed<CalendarEvent[]>([]))
-            )
+            Effect.sync(() => {
+              console.error("❌ Failed to fetch calendar events:", error);
+              return [] as CalendarEvent[];
+            })
           )
         );
 

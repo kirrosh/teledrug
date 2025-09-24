@@ -22,6 +22,20 @@
       "when": 1758531099262,
       "tag": "0002_spicy_arclight",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1758629205650,
+      "tag": "0003_strange_blink",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1758630099646,
+      "tag": "0004_smiling_sphinx",
+      "breakpoints": true
     }
   ]
 }

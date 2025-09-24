@@ -7,6 +7,7 @@ import { AIAgentFactory } from "./ai-agent";
 import { MessageHistory } from "./message-history";
 import { IntegrationRegistry } from "./integration-registry";
 import { JournalRepository } from "./journal-repository";
+import { TaskRepository } from "./task-repository";
 import { ToolProgressReporter } from "../core/tool-progress";
 import type { BotConfig, UpdateContext } from "../types";
 import type {
@@ -62,8 +63,12 @@ const generateResponseFromToolResults = (
       .join("\n\n")
       .trim();
 
-    const parseMode = responses.find((response) => response.parseMode)?.parseMode;
-    const replyMarkup = responses.find((response) => response.replyMarkup)?.replyMarkup;
+    const parseMode = responses.find(
+      (response) => response.parseMode
+    )?.parseMode;
+    const replyMarkup = responses.find(
+      (response) => response.replyMarkup
+    )?.replyMarkup;
 
     const metadataEntries = responses
       .map((response) => response.metadata)
@@ -110,6 +115,7 @@ const makeTelegramClient = (config: BotConfig) =>
     const messageHistory = yield* MessageHistory;
     const integrationRegistry = yield* IntegrationRegistry;
     const journalRepository = yield* JournalRepository;
+    const taskRepository = yield* TaskRepository;
 
     // Create bot instance directly
     const bot = new Bot(config.telegramToken);
@@ -188,6 +194,13 @@ const makeTelegramClient = (config: BotConfig) =>
 
         if (data.startsWith("journal:delete:")) {
           const [, , entryIdRaw] = data.split(":");
+          if (!entryIdRaw) {
+            await ctx.answerCallbackQuery({
+              text: "❌ Не удалось удалить запись",
+              show_alert: true,
+            });
+            return;
+          }
           const entryId = Number.parseInt(entryIdRaw, 10);
           const userId = ctx.from?.id || ctx.chat?.id;
 
@@ -209,7 +222,10 @@ const makeTelegramClient = (config: BotConfig) =>
               try {
                 await ctx.editMessageText("Запись не сохранена");
               } catch (error) {
-                console.error("Не удалось обновить сообщение после удаления:", error);
+                console.error(
+                  "Не удалось обновить сообщение после удаления:",
+                  error
+                );
               }
             } else {
               await ctx.answerCallbackQuery({
@@ -221,6 +237,54 @@ const makeTelegramClient = (config: BotConfig) =>
             console.error("Ошибка при удалении записи дневника:", error);
             await ctx.answerCallbackQuery({
               text: "❌ Не удалось удалить запись",
+              show_alert: true,
+            });
+          }
+
+          return;
+        }
+
+        if (data.startsWith("journal:createTask:")) {
+          // Format: journal:createTask:<entryId>:<YYYYMMDD|0>
+          const parts = data.split(":");
+          const dateToken = parts[3] || "0";
+          let dueAt: Date | null = null;
+          if (/^\d{8}$/.test(dateToken)) {
+            const y = Number(dateToken.slice(0, 4));
+            const m = Number(dateToken.slice(4, 6)) - 1;
+            const d = Number(dateToken.slice(6, 8));
+            const dt = new Date(Date.UTC(y, m, d));
+            // normalize to local day start for simplicity
+            dueAt = new Date(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+          }
+          // Extract title from message text (only one suggestion is shown when button exists)
+          const messageText = ctx.callbackQuery.message?.text || "";
+          const line = messageText
+            .split("\n")
+            .map((l) => l.trim())
+            .find((l) => l.startsWith("• ")) || "";
+          const title = line
+            .replace(/^•\s+/, "")
+            .replace(/\s+—\s+до\s+.+$/, "")
+            .trim();
+          const userId = ctx.from?.id || ctx.chat?.id;
+
+          if (!userId || !title) {
+            await ctx.answerCallbackQuery({
+              text: "❌ Не удалось создать задачу",
+              show_alert: true,
+            });
+            return;
+          }
+
+          try {
+            await Effect.runPromise(taskRepository.create({ userId, title, dueAt }));
+            await ctx.answerCallbackQuery({ text: "✅ Задача создана" });
+            await ctx.reply(`✅ Создана задача: ${title}`);
+          } catch (error) {
+            console.error("Ошибка создания задачи из записи:", error);
+            await ctx.answerCallbackQuery({
+              text: "❌ Ошибка создания задачи",
               show_alert: true,
             });
           }
@@ -248,7 +312,12 @@ const makeTelegramClient = (config: BotConfig) =>
             options?: Parameters<typeof ctx.api.editMessageText>[3]
           ) =>
             Effect.promise(() =>
-              ctx.api.editMessageText(chatId, progressMessageId, content, options)
+              ctx.api.editMessageText(
+                chatId,
+                progressMessageId,
+                content,
+                options
+              )
             ).pipe(
               Effect.catchAll((error: any) =>
                 Effect.sync(() => {
@@ -259,7 +328,10 @@ const makeTelegramClient = (config: BotConfig) =>
                   ) {
                     return;
                   }
-                  console.error("Не удалось обновить сообщение прогресса:", error);
+                  console.error(
+                    "Не удалось обновить сообщение прогресса:",
+                    error
+                  );
                 })
               )
             );
@@ -358,9 +430,8 @@ const makeTelegramClient = (config: BotConfig) =>
               );
             }
 
-            const finalText = (
-              aggregatedResponse?.text || baseText
-            )?.trim() ||
+            const finalText =
+              (aggregatedResponse?.text || baseText)?.trim() ||
               "❌ Извините, не удалось сформировать ответ.";
 
             const finalResponse: AggregatedToolResponse = {
@@ -383,11 +454,10 @@ const makeTelegramClient = (config: BotConfig) =>
                 "❌ Извините, произошла ошибка при обработке сообщения.";
 
               return Effect.gen(function* () {
-                yield* messageHistory.addAssistantMessage(
-                  chatId,
-                  errorMessage
-                );
-                yield* finalizeMessage(errorMessage, false);
+                yield* messageHistory.addAssistantMessage(chatId, errorMessage);
+                yield* finalizeMessage({
+                  text: errorMessage,
+                });
               });
             })
           );
