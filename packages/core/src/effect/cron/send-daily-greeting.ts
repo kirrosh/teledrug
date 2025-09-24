@@ -1,24 +1,66 @@
 import { Effect, Layer } from "effect";
 import { db, sql } from "../../storage/database/client";
-import { users } from "../../storage/database/schema";
+import { users, userSettings } from "../../storage/database/schema";
+import { eq } from "drizzle-orm";
 import { runDailyDigest } from "../digest/runner";
 import { DailyDigestLayer } from "../layers/daily-digest";
 
 const greetingPrefix = "🌞 Доброе утро!";
 
-const fetchRecipients = Effect.tryPromise(async () => {
-  const rows = await db.select({ telegramId: users.telegramId }).from(users);
-  return rows
-    .map((row) => row.telegramId)
-    .filter((value): value is number => Number.isFinite(value));
-}).pipe(
-  Effect.catchAll((error) =>
-    Effect.sync(() => {
-      console.error("❌ Failed to fetch recipients from database:", error);
-      return [] as readonly number[];
-    })
-  )
-);
+const TARGET_HOUR = 10;
+
+const getHourInTimezone = (date: Date, timeZone: string): number | null => {
+  try {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      hour12: false,
+      timeZone,
+    });
+
+    const parsed = Number(formatter.format(date));
+    return Number.isFinite(parsed) ? parsed : null;
+  } catch {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      hour12: false,
+      timeZone: "UTC",
+    });
+    const parsed = Number(formatter.format(date));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+};
+
+const fetchRecipients = (now: Date) =>
+  Effect.tryPromise(async () => {
+    const rows = await db
+      .select()
+      .from(users)
+      .leftJoin(userSettings, eq(userSettings.userId, users.telegramId));
+
+    return rows
+      .map((row) => {
+        const chatId = row.users.telegramId;
+        const timeZone = row.user_settings?.timezone || "UTC";
+        const hour = getHourInTimezone(now, timeZone);
+
+        return {
+          chatId,
+          hour,
+        };
+      })
+      .filter(
+        (entry): entry is { chatId: number; hour: number } =>
+          Number.isFinite(entry.chatId) && entry.hour === TARGET_HOUR
+      )
+      .map((entry) => entry.chatId);
+  }).pipe(
+    Effect.catchAll((error) =>
+      Effect.sync(() => {
+        console.error("❌ Failed to fetch recipients from database:", error);
+        return [] as readonly number[];
+      })
+    )
+  );
 
 const sendTelegramMessage = (token: string, chatId: number, text: string) =>
   Effect.tryPromise(async () => {
@@ -79,17 +121,19 @@ const program = Effect.scoped(
       return;
     }
 
-    const recipients = yield* fetchRecipients;
+    const today = new Date();
+    const recipients = yield* fetchRecipients(today);
 
     if (recipients.length === 0) {
       yield* Effect.sync(() =>
-        console.log("⚠️ Daily digest skipped: no recipients found in database")
+        console.log(
+          `⚠️ Daily digest skipped: no users scheduled for ${TARGET_HOUR}:00 at this hour`
+        )
       );
       return;
     }
 
     let success = 0;
-    const today = new Date();
 
     yield* Effect.forEach(
       recipients,
