@@ -36,6 +36,13 @@
       "when": 1758630099646,
       "tag": "0004_smiling_sphinx",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1758708901760,
+      "tag": "0005_normal_mathemanic",
+      "breakpoints": true
     }
   ]
 }

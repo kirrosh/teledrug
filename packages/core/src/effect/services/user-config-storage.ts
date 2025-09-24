@@ -37,6 +37,12 @@ const makeUserConfigStorage = Effect.gen(function* () {
 
         const user = userOption.value
 
+        const settings = yield* userRepository.getUserSettings(userId)
+        const preferences = settings.preferences as
+          | Record<string, unknown>
+          | null
+          | undefined
+
         // Получаем все расшифрованные интеграции
         const integrations = yield* userRepository.getAllDecryptedIntegrations(userId)
 
@@ -44,6 +50,12 @@ const makeUserConfigStorage = Effect.gen(function* () {
         const config: UserConfig = {
           userId: user.telegramId,
           username: user.username,
+          settings: {
+            timezone: settings.timezone,
+            locale: settings.locale,
+            city: settings.city ?? undefined,
+            country: settings.country ?? undefined,
+          },
           integrations: integrations.map(({ integration, credentials }) => ({
             name: integration.integrationType,
             credentials,
@@ -53,6 +65,7 @@ const makeUserConfigStorage = Effect.gen(function* () {
           aiSettings: {
             model: 'gpt-5-nano',
           },
+          preferences: preferences ?? undefined,
         }
 
         console.log(`📦 Кэшируем конфигурацию для пользователя ${userId}`)

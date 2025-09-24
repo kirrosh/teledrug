@@ -23,6 +23,19 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const userSettings = pgTable("user_settings", {
+  userId: bigint("user_id", { mode: "number" })
+    .references(() => users.telegramId, { onDelete: "cascade" })
+    .primaryKey(),
+  timezone: varchar("timezone", { length: 64 }).default("UTC").notNull(),
+  locale: varchar("locale", { length: 10 }).default("ru-RU").notNull(),
+  city: varchar("city", { length: 100 }),
+  country: varchar("country", { length: 100 }),
+  preferences: jsonb("preferences"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const userIntegrations = pgTable(
   "user_integrations",
   {
@@ -85,6 +98,8 @@ export const digestModuleSettings = pgTable(
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+export type UserSetting = typeof userSettings.$inferSelect;
+export type NewUserSetting = typeof userSettings.$inferInsert;
 export type UserIntegration = typeof userIntegrations.$inferSelect;
 export type NewUserIntegration = typeof userIntegrations.$inferInsert;
 export type DigestModule = typeof digestModules.$inferSelect;
