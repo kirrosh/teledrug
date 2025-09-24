@@ -1,11 +1,8 @@
-import { Effect, Layer, pipe } from "effect";
+import { Effect, Layer } from "effect";
 import { db, sql } from "../../storage/database/client";
 import { users } from "../../storage/database/schema";
-import { DigestSettingsRepositoryLive } from "../services/digest-settings";
-import { UserRepositoryLive } from "../services/user-repository";
-import { EncryptionServiceLive } from "../services/encryption";
 import { runDailyDigest } from "../digest/runner";
-import { TaskRepositoryLive } from "../services/task-repository";
+import { DailyDigestLayer } from "../layers/daily-digest";
 
 const greetingPrefix = "🌞 Доброе утро!";
 
@@ -52,23 +49,9 @@ const sendTelegramMessage = (token: string, chatId: number, text: string) =>
     )
   );
 
-const digestLayer = DigestSettingsRepositoryLive;
-
-const userRepositoryLayer = pipe(
-  UserRepositoryLive,
-  Layer.provide(EncryptionServiceLive),
-  Layer.provide(digestLayer)
-);
-
-const servicesLayer = Layer.mergeAll(
-  digestLayer,
-  userRepositoryLayer,
-  TaskRepositoryLive
-);
-
 const composeMessage = (userId: number, date: Date) =>
   runDailyDigest(userId, date).pipe(
-    Effect.provide(servicesLayer),
+    Effect.provide(DailyDigestLayer),
     Effect.map((modules) => {
       const body = modules
         .map((module) => module.text)
@@ -85,53 +68,53 @@ const composeMessage = (userId: number, date: Date) =>
     })
   );
 
-const program = Effect.gen(function* () {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
 
-  if (!token) {
-    yield* Effect.sync(() =>
-      console.log("❌ TELEGRAM_BOT_TOKEN is not set; aborting job")
+    if (!token) {
+      yield* Effect.sync(() =>
+        console.log("❌ TELEGRAM_BOT_TOKEN is not set; aborting job")
+      );
+      return;
+    }
+
+    const recipients = yield* fetchRecipients;
+
+    if (recipients.length === 0) {
+      yield* Effect.sync(() =>
+        console.log("⚠️ Daily digest skipped: no recipients found in database")
+      );
+      return;
+    }
+
+    let success = 0;
+    const today = new Date();
+
+    yield* Effect.forEach(
+      recipients,
+      (chatId) =>
+        Effect.gen(function* () {
+          const message = yield* composeMessage(chatId, today).pipe(
+            Effect.catchAll(() =>
+              Effect.succeed(`${greetingPrefix}\n\nХорошего дня!`)
+            )
+          );
+          const sent = yield* sendTelegramMessage(token, chatId, message);
+          if (sent) {
+            success += 1;
+          }
+        }),
+      { discard: true }
     );
-    return;
-  }
 
-  const recipients = yield* fetchRecipients;
-
-  if (recipients.length === 0) {
     yield* Effect.sync(() =>
-      console.log("⚠️ Daily digest skipped: no recipients found in database")
+      console.log(`✅ Daily digest processed (${success}/${recipients.length})`)
     );
-    return;
-  }
+  })
+);
 
-  let success = 0;
-  const today = new Date();
-
-  yield* Effect.forEach(
-    recipients,
-    (chatId) =>
-      Effect.gen(function* () {
-        const message = yield* composeMessage(chatId, today).pipe(
-          Effect.catchAll(() =>
-            Effect.succeed(`${greetingPrefix}\n\nХорошего дня!`)
-          )
-        );
-        const sent = yield* sendTelegramMessage(token, chatId, message);
-        if (sent) {
-          success += 1;
-        }
-      }),
-    { discard: true }
-  );
-
-  yield* Effect.sync(() =>
-    console.log(`✅ Daily digest processed (${success}/${recipients.length})`)
-  );
-});
-
-Effect.runPromise(
-  Effect.scoped(Effect.provide(servicesLayer)(program))
-)
+Effect.runPromise(program)
   .catch((error) => {
     console.error("❌ Daily digest job failed:", error);
     process.exitCode = 1;
