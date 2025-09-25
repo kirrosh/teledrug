@@ -16,12 +16,33 @@ interface SessionPayload {
   telegram: TelegramUser | null;
 }
 
+interface Task {
+  id: number;
+  title: string;
+  status: string;
+  dueAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface TasksResponse {
-  tasks: unknown[];
+  tasks: Task[];
+}
+
+interface JournalEntry {
+  id: number;
+  title: string;
+  content: string;
+  entryDate: string;
+  mood: string;
+  energy: string;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface JournalResponse {
-  entries: unknown[];
+  entries: JournalEntry[];
 }
 
 const makeRequest = async <T,>(url: string, init?: RequestInit): Promise<T> => {
@@ -51,18 +72,219 @@ const makeRequest = async <T,>(url: string, init?: RequestInit): Promise<T> => {
 
 const emptySession: SessionPayload = { isAuthorized: false, telegram: null };
 
+const TASK_STATUS_META: Record<
+  string,
+  { label: string; badgeClass: string; indicatorClass: string }
+> = {
+  todo: {
+    label: "В работе",
+    badgeClass:
+      "bg-sky-500/15 text-sky-200 border border-sky-400/20 shadow-[0_0_18px_-6px_rgba(56,189,248,0.75)]",
+    indicatorClass: "bg-sky-400",
+  },
+  done: {
+    label: "Готово",
+    badgeClass:
+      "bg-emerald-500/15 text-emerald-200 border border-emerald-400/20 shadow-[0_0_18px_-6px_rgba(16,185,129,0.75)]",
+    indicatorClass: "bg-emerald-400",
+  },
+  blocked: {
+    label: "Заблокирована",
+    badgeClass:
+      "bg-rose-500/15 text-rose-200 border border-rose-400/20 shadow-[0_0_18px_-6px_rgba(244,63,94,0.75)]",
+    indicatorClass: "bg-rose-400",
+  },
+  review: {
+    label: "На проверке",
+    badgeClass:
+      "bg-amber-500/15 text-amber-200 border border-amber-400/20 shadow-[0_0_18px_-6px_rgba(245,158,11,0.75)]",
+    indicatorClass: "bg-amber-400",
+  },
+};
+
+const MOOD_LABELS: Record<string, { label: string; className: string }> = {
+  very_positive: {
+    label: "Отличное настроение",
+    className: "bg-emerald-500/15 text-emerald-200 border border-emerald-400/30",
+  },
+  positive: {
+    label: "Хорошее настроение",
+    className: "bg-sky-500/15 text-sky-200 border border-sky-400/30",
+  },
+  neutral: {
+    label: "Нейтрально",
+    className: "bg-slate-500/15 text-slate-200 border border-slate-400/30",
+  },
+  negative: {
+    label: "Негативное настроение",
+    className: "bg-amber-500/15 text-amber-200 border border-amber-400/30",
+  },
+  very_negative: {
+    label: "Очень тяжело",
+    className: "bg-rose-500/15 text-rose-200 border border-rose-400/30",
+  },
+  mixed: {
+    label: "Смешанные чувства",
+    className: "bg-purple-500/15 text-purple-200 border border-purple-400/30",
+  },
+};
+
+const ENERGY_LABELS: Record<string, { label: string; className: string }> = {
+  very_high: {
+    label: "Очень высокая энергия",
+    className: "bg-emerald-500/10 text-emerald-200 border border-emerald-400/20",
+  },
+  high: {
+    label: "Высокая энергия",
+    className: "bg-sky-500/10 text-sky-200 border border-sky-400/20",
+  },
+  medium: {
+    label: "Средняя энергия",
+    className: "bg-slate-500/10 text-slate-200 border border-slate-400/20",
+  },
+  low: {
+    label: "Низкая энергия",
+    className: "bg-amber-500/10 text-amber-200 border border-amber-400/20",
+  },
+  very_low: {
+    label: "Очень низкая энергия",
+    className: "bg-rose-500/10 text-rose-200 border border-rose-400/20",
+  },
+};
+
+const dateFormatter = new Intl.DateTimeFormat("ru-RU", {
+  day: "2-digit",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+const dayFormatter = new Intl.DateTimeFormat("ru-RU", {
+  day: "numeric",
+  month: "long",
+});
+
+const timeFormatter = new Intl.DateTimeFormat("ru-RU", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+const formatTaskDueDate = (iso: string | null): string => {
+  if (!iso) return "Без срока";
+  try {
+    const date = new Date(iso);
+    return dateFormatter.format(date);
+  } catch {
+    return "Без срока";
+  }
+};
+
+const formatEntryDate = (iso: string): string => {
+  try {
+    const date = new Date(iso);
+    return `${dayFormatter.format(date)} · ${timeFormatter.format(date)}`;
+  } catch {
+    return iso;
+  }
+};
+
+const TaskCard = ({ task }: { task: Task }) => {
+  const meta = TASK_STATUS_META[task.status] ?? {
+    label: task.status,
+    badgeClass:
+      "bg-slate-500/15 text-slate-200 border border-slate-400/20 shadow-[0_0_18px_-6px_rgba(148,163,184,0.75)]",
+    indicatorClass: "bg-slate-400",
+  };
+
+  const dueLabel = formatTaskDueDate(task.dueAt);
+  const updatedLabel = formatTaskDueDate(task.updatedAt);
+
+  return (
+    <article className="rounded-2xl border border-slate-800/60 bg-slate-900/60 p-4 shadow-[0_10px_40px_-24px_rgba(15,118,110,0.6)] backdrop-blur">
+      <div className="flex items-start justify-between gap-3">
+        <h3 className="text-base font-semibold leading-snug text-slate-50">
+          {task.title}
+        </h3>
+        <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${meta.badgeClass}`}>
+          {meta.label}
+        </span>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-slate-400">
+        <span className="inline-flex items-center gap-1">
+          <span className={`inline-flex h-2 w-2 rounded-full ${meta.indicatorClass}`} />
+          {dueLabel}
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-slate-500" />
+          Обновлено: {updatedLabel}
+        </span>
+      </div>
+    </article>
+  );
+};
+
+const JournalEntryCard = ({ entry }: { entry: JournalEntry }) => {
+  const mood = MOOD_LABELS[entry.mood] ?? {
+    label: entry.mood,
+    className: "bg-slate-500/10 text-slate-200 border border-slate-400/20",
+  };
+  const energy = ENERGY_LABELS[entry.energy] ?? {
+    label: entry.energy,
+    className: "bg-slate-500/10 text-slate-200 border border-slate-400/20",
+  };
+
+  const entryDateLabel = formatEntryDate(entry.entryDate || entry.createdAt);
+
+  return (
+    <article className="rounded-2xl border border-slate-800/60 bg-slate-900/60 p-4 shadow-[0_10px_40px_-24px_rgba(59,130,246,0.6)] backdrop-blur">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <h3 className="text-base font-semibold leading-snug text-slate-50">
+            {entry.title}
+          </h3>
+          <span className="text-xs text-slate-400">{entryDateLabel}</span>
+        </div>
+        <div className="flex flex-col items-end gap-2 text-xs">
+          <span className={`inline-flex items-center rounded-full px-3 py-1 font-medium ${mood.className}`}>
+            {mood.label}
+          </span>
+          <span className={`inline-flex items-center rounded-full px-3 py-1 font-medium ${energy.className}`}>
+            {energy.label}
+          </span>
+        </div>
+      </div>
+      <p className="mt-4 text-sm leading-relaxed text-slate-200 whitespace-pre-line">
+        {entry.content}
+      </p>
+      {entry.tags && entry.tags.length > 0 ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {entry.tags.map((tag) => (
+            <span
+              key={tag}
+              className="inline-flex items-center rounded-full border border-slate-700/60 bg-slate-800/60 px-3 py-1 text-xs font-medium text-slate-200"
+            >
+              #{tag}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </article>
+  );
+};
+
 export default function Home() {
   const [session, setSession] = useState<SessionPayload | null>(null);
   const [status, setStatus] = useState<"loading" | "idle" | "authenticating">("loading");
   const [error, setError] = useState<string | null>(null);
-  const [tasks, setTasks] = useState<unknown[]>([]);
-  const [journalEntries, setJournalEntries] = useState<unknown[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [journalLoading, setJournalLoading] = useState(false);
   const [tasksError, setTasksError] = useState<string | null>(null);
   const [journalError, setJournalError] = useState<string | null>(null);
   const [logoutPending, setLogoutPending] = useState(false);
   const authAttempted = useRef(false);
+  const dataPrefetched = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -143,6 +365,7 @@ export default function Home() {
       setTasksError(null);
       setJournalError(null);
       authAttempted.current = false;
+      dataPrefetched.current = false;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось завершить сессию");
     } finally {
@@ -155,7 +378,8 @@ export default function Home() {
     setTasksError(null);
     try {
       const data = await makeRequest<TasksResponse>("/api/tasks");
-      setTasks(Array.isArray(data.tasks) ? data.tasks : []);
+      const parsed = Array.isArray(data.tasks) ? data.tasks : [];
+      setTasks(parsed);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Не удалось получить задачи";
       setTasksError(message);
@@ -169,7 +393,8 @@ export default function Home() {
     setJournalError(null);
     try {
       const data = await makeRequest<JournalResponse>("/api/journal");
-      setJournalEntries(Array.isArray(data.entries) ? data.entries : []);
+      const parsed = Array.isArray(data.entries) ? data.entries : [];
+      setJournalEntries(parsed);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Не удалось получить журнал";
       setJournalError(message);
@@ -178,114 +403,200 @@ export default function Home() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!session?.isAuthorized) return;
+    if (dataPrefetched.current) return;
+
+    dataPrefetched.current = true;
+    void Promise.all([loadTasks(), loadJournal()]);
+  }, [loadJournal, loadTasks, session?.isAuthorized]);
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center gap-8 px-6 py-10">
-      <header className="w-full max-w-3xl flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold">TeleDrug MiniApp</h1>
-        <p className="text-sm text-slate-300">
-          Авторизация через Telegram и iron-session. После успешного входа можно выполнять запросы
-          к базе данных напрямую из интерфейса.
-        </p>
-      </header>
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 pb-16 pt-10 sm:px-6">
+        <header className="flex flex-col gap-2">
+          <p className="text-xs uppercase tracking-[0.3em] text-slate-500">TeleDrug</p>
+          <h1 className="text-3xl font-semibold leading-tight text-white">
+            Управление задачами и записями прямо в Telegram
+          </h1>
+          <p className="text-sm text-slate-400">
+            Всё синхронизируется с вашей базой данных. Авторизуйтесь через мини-приложение и управляйте
+            задачами и заметками без переключения между приложениями.
+          </p>
+        </header>
 
-      <section className="w-full max-w-3xl rounded-lg border border-slate-800 bg-slate-900/40 p-6 shadow-lg">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-medium">Состояние сессии</h2>
-            <p className="text-xs text-slate-400">Статус: {status === "authenticating" ? "авторизация" : status === "loading" ? "проверка" : "готово"}</p>
+        <section className="rounded-3xl border border-slate-800/60 bg-slate-900/70 p-5 shadow-[0_40px_90px_-35px_rgba(56,189,248,0.35)] backdrop-blur">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Статус авторизации</h2>
+              <p className="text-xs text-slate-400">
+                {status === "authenticating"
+                  ? "Авторизация через Telegram..."
+                  : status === "loading"
+                  ? "Проверяем сессию..."
+                  : session?.isAuthorized
+                  ? "Вы успешно авторизованы"
+                  : "Требуется авторизация"}
+              </p>
+            </div>
+            {session?.isAuthorized ? (
+              <button
+                className="rounded-full bg-rose-500 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-rose-500/25 transition hover:bg-rose-400 disabled:opacity-60"
+                onClick={handleLogout}
+                disabled={logoutPending}
+              >
+                {logoutPending ? "Выходим..." : "Выйти"}
+              </button>
+            ) : (
+              <button
+                className="rounded-full bg-sky-500 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-sky-500/25 transition hover:bg-sky-400 disabled:opacity-60"
+                onClick={handleRetryAuth}
+                disabled={status !== "idle"}
+              >
+                {status === "authenticating" ? "Авторизация..." : "Повторить вход"}
+              </button>
+            )}
           </div>
-          {session?.isAuthorized ? (
-            <button
-              className="rounded bg-red-500 px-3 py-1 text-sm font-medium text-white hover:bg-red-400 disabled:opacity-50"
-              onClick={handleLogout}
-              disabled={logoutPending}
-            >
-              {logoutPending ? "Выходим..." : "Выйти"}
-            </button>
-          ) : (
-            <button
-              className="rounded bg-blue-500 px-3 py-1 text-sm font-medium text-white hover:bg-blue-400 disabled:opacity-50"
-              onClick={handleRetryAuth}
-              disabled={status !== "idle"}
-            >
-              Повторить
-            </button>
+
+          {error && (
+            <p className="mt-4 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+              {error}
+            </p>
           )}
-        </div>
 
-        {error && (
-          <p className="mt-4 rounded bg-red-500/10 px-3 py-2 text-sm text-red-300">
-            {error}
-          </p>
-        )}
-
-        {session?.isAuthorized && session.telegram ? (
-          <dl className="mt-4 grid gap-2 text-sm text-slate-200">
-            <div className="flex justify-between gap-2">
-              <dt className="text-slate-400">Пользователь</dt>
-              <dd className="font-medium">{session.telegram.firstName} {session.telegram.lastName ?? ""}</dd>
-            </div>
-            {session.telegram.username && (
-              <div className="flex justify-between gap-2">
-                <dt className="text-slate-400">Username</dt>
-                <dd className="font-medium">@{session.telegram.username}</dd>
+          {session?.isAuthorized && session.telegram ? (
+            <dl className="mt-4 grid gap-3 text-sm text-slate-200">
+              <div className="flex items-center justify-between">
+                <dt className="text-slate-400">Пользователь</dt>
+                <dd className="font-medium">
+                  {session.telegram.firstName} {session.telegram.lastName ?? ""}
+                </dd>
               </div>
-            )}
-            <div className="flex justify-between gap-2">
-              <dt className="text-slate-400">ID</dt>
-              <dd className="font-mono">{session.telegram.id}</dd>
-            </div>
-          </dl>
-        ) : (
-          <p className="mt-4 text-sm text-slate-300">
-            Для работы UI необходимо запустить мини-приложение внутри Telegram, чтобы передать initData.
-          </p>
-        )}
-      </section>
+              {session.telegram.username ? (
+                <div className="flex items-center justify-between">
+                  <dt className="text-slate-400">Telegram</dt>
+                  <dd className="font-medium">@{session.telegram.username}</dd>
+                </div>
+              ) : null}
+              <div className="flex items-center justify-between">
+                <dt className="text-slate-400">ID</dt>
+                <dd className="font-mono text-xs">{session.telegram.id}</dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="mt-4 text-sm text-slate-300">
+              Откройте мини-приложение внутри Telegram, чтобы передать данные авторизации. После этого здесь
+              появятся ваши задачи и записи.
+            </p>
+          )}
+        </section>
 
-      {session?.isAuthorized ? (
-        <div className="w-full max-w-3xl grid gap-6 md:grid-cols-2">
-          <section className="rounded-lg border border-slate-800 bg-slate-900/40 p-6 shadow-lg">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-medium">Задачи</h3>
-              <button
-                className="rounded bg-emerald-500 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-400 disabled:opacity-50"
-                onClick={loadTasks}
-                disabled={tasksLoading}
-              >
-                {tasksLoading ? "Загружаем..." : "Обновить"}
-              </button>
-            </div>
-            {tasksError ? (
-              <p className="mt-3 rounded bg-red-500/10 px-3 py-2 text-sm text-red-300">{tasksError}</p>
-            ) : (
-              <pre className="mt-3 max-h-56 overflow-auto rounded bg-slate-950/60 p-3 text-xs text-slate-100">
-{JSON.stringify(tasks, null, 2)}
-              </pre>
-            )}
-          </section>
+        {session?.isAuthorized ? (
+          <>
+            <section className="rounded-3xl border border-slate-800/60 bg-slate-900/70 p-5 shadow-[0_40px_90px_-35px_rgba(34,197,94,0.35)] backdrop-blur">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">Задачи</h2>
+                  <p className="text-xs text-slate-400">
+                    {tasks.length > 0
+                      ? `Всего задач: ${tasks.length}`
+                      : "Список задач загрузится сразу после авторизации"}
+                  </p>
+                </div>
+                <button
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 bg-slate-800/60 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-600 hover:text-white disabled:opacity-60"
+                  onClick={loadTasks}
+                  disabled={tasksLoading}
+                >
+                  {tasksLoading ? "Обновляем..." : "Обновить"}
+                </button>
+              </div>
 
-          <section className="rounded-lg border border-slate-800 bg-slate-900/40 p-6 shadow-lg">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-medium">Журнал</h3>
-              <button
-                className="rounded bg-emerald-500 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-400 disabled:opacity-50"
-                onClick={loadJournal}
-                disabled={journalLoading}
-              >
-                {journalLoading ? "Загружаем..." : "Обновить"}
-              </button>
-            </div>
-            {journalError ? (
-              <p className="mt-3 rounded bg-red-500/10 px-3 py-2 text-sm text-red-300">{journalError}</p>
-            ) : (
-              <pre className="mt-3 max-h-56 overflow-auto rounded bg-slate-950/60 p-3 text-xs text-slate-100">
-{JSON.stringify(journalEntries, null, 2)}
-              </pre>
-            )}
-          </section>
-        </div>
-      ) : null}
+              {tasksError ? (
+                <p className="mt-4 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                  {tasksError}
+                </p>
+              ) : null}
+
+              {tasksLoading ? (
+                <div className="mt-4 grid gap-3">
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <div
+                      key={`task-skeleton-${index}`}
+                      className="h-24 rounded-2xl border border-slate-800/60 bg-slate-800/30 animate-pulse"
+                    />
+                  ))}
+                </div>
+              ) : null}
+
+              {!tasksLoading && !tasksError ? (
+                tasks.length > 0 ? (
+                  <div className="mt-4 grid gap-3">
+                    {tasks.map((task) => (
+                      <TaskCard key={task.id} task={task} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-2xl border border-slate-800/60 bg-slate-900/40 px-4 py-6 text-sm text-slate-300">
+                    Задач пока нет. Создайте их через бота или другое приложение, и они появятся здесь.
+                  </div>
+                )
+              ) : null}
+            </section>
+
+            <section className="rounded-3xl border border-slate-800/60 bg-slate-900/70 p-5 shadow-[0_40px_90px_-35px_rgba(59,130,246,0.35)] backdrop-blur">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">Записи журнала</h2>
+                  <p className="text-xs text-slate-400">
+                    {journalEntries.length > 0
+                      ? `Записей: ${journalEntries.length}`
+                      : "Журнал загрузится автоматически"}
+                  </p>
+                </div>
+                <button
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 bg-slate-800/60 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-600 hover:text-white disabled:opacity-60"
+                  onClick={loadJournal}
+                  disabled={journalLoading}
+                >
+                  {journalLoading ? "Обновляем..." : "Обновить"}
+                </button>
+              </div>
+
+              {journalError ? (
+                <p className="mt-4 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                  {journalError}
+                </p>
+              ) : null}
+
+              {journalLoading ? (
+                <div className="mt-4 grid gap-3">
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <div
+                      key={`journal-skeleton-${index}`}
+                      className="h-32 rounded-2xl border border-slate-800/60 bg-slate-800/30 animate-pulse"
+                    />
+                  ))}
+                </div>
+              ) : null}
+
+              {!journalLoading && !journalError ? (
+                journalEntries.length > 0 ? (
+                  <div className="mt-4 grid gap-3">
+                    {journalEntries.map((entry) => (
+                      <JournalEntryCard key={entry.id} entry={entry} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-2xl border border-slate-800/60 bg-slate-900/40 px-4 py-6 text-sm text-slate-300">
+                    Здесь появятся ваши заметки. Создайте запись через бота, чтобы увидеть результат анализа.
+                  </div>
+                )
+              ) : null}
+            </section>
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }
