@@ -15,10 +15,7 @@ const serializeJournalEntry = (entry: JournalEntry): JournalEntryDto => ({
   id: entry.id,
   title: entry.title,
   content: entry.content,
-  entryDate:
-    entry.entryDate instanceof Date
-      ? entry.entryDate.toISOString()
-      : new Date(entry.entryDate).toISOString(),
+  entryDate: new Date(entry.entryDate as string | number | Date).toISOString(),
   mood: entry.mood,
   energy: entry.energy,
   tags: entry.tags ?? [],
