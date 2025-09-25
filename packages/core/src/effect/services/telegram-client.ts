@@ -22,6 +22,42 @@ interface AggregatedToolResponse {
   readonly metadata?: Record<string, unknown>;
 }
 
+type WebAppUrlIssue = "invalid" | "nonHttps";
+
+const resolveWebAppUrl = (
+  value: string | undefined,
+): { url?: string; issue?: WebAppUrlIssue } => {
+  if (!value) {
+    return {};
+  }
+
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0) {
+    return {};
+  }
+
+  const candidate = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+
+  try {
+    const parsed = new URL(candidate);
+
+    if (parsed.protocol === "http:") {
+      parsed.protocol = "https:";
+    }
+
+    if (parsed.protocol !== "https:") {
+      return { issue: "nonHttps" };
+    }
+
+    return { url: parsed.toString() };
+  } catch {
+    return { issue: "invalid" };
+  }
+};
+
 // Helper function to generate response from tool results
 const generateResponseFromToolResults = (
   toolResults: any[],
@@ -120,6 +156,38 @@ const makeTelegramClient = (config: BotConfig) =>
     // Create bot instance directly
     const bot = new Bot(config.telegramToken);
 
+    const rawWebAppUrl = config.webAppUrl?.trim();
+    const { url: resolvedWebAppUrl, issue: webAppUrlIssue } = resolveWebAppUrl(
+      rawWebAppUrl,
+    );
+
+    const webAppUnavailableWarning =
+      rawWebAppUrl && !resolvedWebAppUrl && webAppUrlIssue
+        ? webAppUrlIssue === "nonHttps"
+          ? "WEBAPP_URL должен использовать протокол https. Пропускаем регистрацию Mini App в меню."
+          : "WEBAPP_URL указан, но не является корректным URL. Пропускаем регистрацию Mini App в меню."
+        : undefined;
+
+    const webAppUnavailableResponse = (() => {
+      if (resolvedWebAppUrl) {
+        return undefined;
+      }
+
+      if (!rawWebAppUrl) {
+        return "Переменная окружения WEBAPP_URL не задана. Укажите HTTPS адрес мини-приложения, чтобы открыть его через команду /app.";
+      }
+
+      if (webAppUrlIssue === "nonHttps") {
+        return "WEBAPP_URL должен начинаться с https://. Обновите переменную окружения и перезапустите бота.";
+      }
+
+      if (webAppUrlIssue === "invalid") {
+        return "WEBAPP_URL указан, но имеет неверный формат. Укажите корректный HTTPS адрес мини-приложения и перезапустите бота.";
+      }
+
+      return "Мини-приложение сейчас недоступно. Проверьте значение WEBAPP_URL.";
+    })();
+
     // Setup basic handlers
     const setupHandlers = () => {
       bot.command("start", async (ctx) => {
@@ -138,18 +206,17 @@ const makeTelegramClient = (config: BotConfig) =>
           return;
         }
 
-        const webAppUrl = config.webAppUrl?.trim();
-
-        if (!webAppUrl) {
+        if (!resolvedWebAppUrl) {
           await ctx.reply(
-            "Переменная окружения WEBAPP_URL не задана. Укажите адрес мини-приложения, чтобы открыть его через команду /app."
+            webAppUnavailableResponse ??
+              "Мини-приложение сейчас недоступно. Проверьте значение WEBAPP_URL.",
           );
           return;
         }
 
         const keyboard = new InlineKeyboard().webApp(
           "🚀 Открыть Mini App",
-          webAppUrl
+          resolvedWebAppUrl
         );
 
         await ctx.reply(
@@ -540,34 +607,30 @@ const makeTelegramClient = (config: BotConfig) =>
       try {
         console.log("🚀 Запуск Telegram клиента...");
 
-        const webAppUrl = config.webAppUrl?.trim();
-
         const commands = [
           { command: "start", description: "🚀 Запустить бота" },
           { command: "clear", description: "🧹 Очистить историю" },
           { command: "integrations", description: "📊 Показать интеграции" },
         ];
 
-        if (webAppUrl) {
+        if (resolvedWebAppUrl) {
           commands.push({ command: "app", description: "🚀 Открыть приложение" });
         }
 
         yield* Effect.promise(() => bot.api.setMyCommands(commands));
 
-        if (webAppUrl) {
+        if (resolvedWebAppUrl) {
           yield* Effect.promise(() =>
             bot.api.setChatMenuButton({
               menu_button: {
                 type: "web_app",
                 text: "🚀 Открыть приложение",
-                web_app: { url: webAppUrl },
+                web_app: { url: resolvedWebAppUrl },
               },
             })
           );
-        } else {
-          console.warn(
-            "WEBAPP_URL не задан. Пропускаем регистрацию кнопки меню Mini App."
-          );
+        } else if (webAppUnavailableWarning) {
+          console.warn(webAppUnavailableWarning);
         }
 
         yield* Effect.promise(() => bot.start());
