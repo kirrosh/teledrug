@@ -4,6 +4,7 @@ import {
   type SessionOptions,
 } from "iron-session";
 import { cookies } from "next/headers";
+import type { SessionPayload } from "@/types/api";
 import type { NextRequest, NextResponse } from "next/server";
 
 const sessionPassword = process.env.IRON_SESSION_PASSWORD;
@@ -53,3 +54,8 @@ export const getWritableSession = async (
   response: NextResponse
 ): Promise<MiniAppSession> =>
   getIronSession<SessionData>(request, response, sessionOptions);
+
+export const buildSessionPayload = (session: MiniAppSession): SessionPayload => ({
+  isAuthorized: Boolean(session.isAuthorized && session.telegram),
+  telegram: session.telegram ?? null,
+});
