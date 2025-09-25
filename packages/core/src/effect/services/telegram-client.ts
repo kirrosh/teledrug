@@ -540,14 +540,35 @@ const makeTelegramClient = (config: BotConfig) =>
       try {
         console.log("🚀 Запуск Telegram клиента...");
 
-        // Set bot commands
-        yield* Effect.promise(() =>
-          bot.api.setMyCommands([
-            { command: "start", description: "🚀 Запустить бота" },
-            { command: "clear", description: "🧹 Очистить историю" },
-            { command: "integrations", description: "📊 Показать интеграции" },
-          ])
-        );
+        const webAppUrl = config.webAppUrl?.trim();
+
+        const commands = [
+          { command: "start", description: "🚀 Запустить бота" },
+          { command: "clear", description: "🧹 Очистить историю" },
+          { command: "integrations", description: "📊 Показать интеграции" },
+        ];
+
+        if (webAppUrl) {
+          commands.push({ command: "app", description: "🚀 Открыть приложение" });
+        }
+
+        yield* Effect.promise(() => bot.api.setMyCommands(commands));
+
+        if (webAppUrl) {
+          yield* Effect.promise(() =>
+            bot.api.setChatMenuButton({
+              menu_button: {
+                type: "web_app",
+                text: "🚀 Открыть приложение",
+                web_app: { url: webAppUrl },
+              },
+            })
+          );
+        } else {
+          console.warn(
+            "WEBAPP_URL не задан. Пропускаем регистрацию кнопки меню Mini App."
+          );
+        }
 
         yield* Effect.promise(() => bot.start());
         console.log("✅ Telegram клиент запущен!");
