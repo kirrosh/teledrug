@@ -104,4 +104,5 @@ export const createMainLayer = (
 export const MainLayer = createMainLayer({
   telegramToken: process.env.TELEGRAM_BOT_TOKEN!,
   openaiApiKey: process.env.OPENAI_API_KEY!,
+  webAppUrl: process.env.WEBAPP_URL,
 });

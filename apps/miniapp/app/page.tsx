@@ -1,103 +1,291 @@
-import Image from "next/image";
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+
+interface TelegramUser {
+  id: number;
+  firstName: string;
+  lastName?: string;
+  username?: string;
+  photoUrl?: string;
+  languageCode?: string;
+}
+
+interface SessionPayload {
+  isAuthorized: boolean;
+  telegram: TelegramUser | null;
+}
+
+interface TasksResponse {
+  tasks: unknown[];
+}
+
+interface JournalResponse {
+  entries: unknown[];
+}
+
+const makeRequest = async <T,>(url: string, init?: RequestInit): Promise<T> => {
+  const response = await fetch(url, {
+    credentials: "include",
+    ...init,
+  });
+
+  let data: unknown = null;
+
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+
+  if (!response.ok) {
+    if (data && typeof data === "object" && "error" in data) {
+      const { error } = data as { error?: unknown };
+      throw new Error(error ? String(error) : "Request failed");
+    }
+    throw new Error("Request failed");
+  }
+
+  return (data ?? {}) as T;
+};
+
+const emptySession: SessionPayload = { isAuthorized: false, telegram: null };
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [session, setSession] = useState<SessionPayload | null>(null);
+  const [status, setStatus] = useState<"loading" | "idle" | "authenticating">("loading");
+  const [error, setError] = useState<string | null>(null);
+  const [tasks, setTasks] = useState<unknown[]>([]);
+  const [journalEntries, setJournalEntries] = useState<unknown[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [journalLoading, setJournalLoading] = useState(false);
+  const [tasksError, setTasksError] = useState<string | null>(null);
+  const [journalError, setJournalError] = useState<string | null>(null);
+  const [logoutPending, setLogoutPending] = useState(false);
+  const authAttempted = useRef(false);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  useEffect(() => {
+    let active = true;
+
+    const initialize = async () => {
+      try {
+        const data = await makeRequest<SessionPayload>("/api/session");
+        if (!active) return;
+        setSession(data);
+        setStatus("idle");
+        setError(null);
+      } catch (cause) {
+        if (!active) return;
+        setSession(emptySession);
+        setStatus("idle");
+        setError(cause instanceof Error ? cause.message : "Не удалось проверить сессию");
+      }
+    };
+
+    void initialize();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const authenticate = useCallback(async () => {
+    const telegram = window.Telegram?.WebApp;
+
+    if (!telegram || !telegram.initData) {
+      authAttempted.current = true;
+      setError("Откройте мини-приложение внутри Telegram, чтобы авторизоваться.");
+      return;
+    }
+
+    telegram.ready?.();
+    telegram.expand?.();
+
+    setStatus("authenticating");
+    authAttempted.current = true;
+
+    try {
+      const data = await makeRequest<SessionPayload>("/api/auth/telegram", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData: telegram.initData }),
+      });
+      setSession(data);
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Авторизация не удалась");
+    } finally {
+      setStatus("idle");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (status !== "idle") return;
+    if (!session) return;
+    if (session.isAuthorized) return;
+    if (authAttempted.current) return;
+
+    void authenticate();
+  }, [authenticate, session, status]);
+
+  const handleRetryAuth = useCallback(() => {
+    authAttempted.current = false;
+    void authenticate();
+  }, [authenticate]);
+
+  const handleLogout = useCallback(async () => {
+    setLogoutPending(true);
+    try {
+      await makeRequest<{ ok: boolean }>("/api/logout", { method: "POST" });
+      setSession(emptySession);
+      setTasks([]);
+      setJournalEntries([]);
+      setTasksError(null);
+      setJournalError(null);
+      authAttempted.current = false;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось завершить сессию");
+    } finally {
+      setLogoutPending(false);
+    }
+  }, []);
+
+  const loadTasks = useCallback(async () => {
+    setTasksLoading(true);
+    setTasksError(null);
+    try {
+      const data = await makeRequest<TasksResponse>("/api/tasks");
+      setTasks(Array.isArray(data.tasks) ? data.tasks : []);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Не удалось получить задачи";
+      setTasksError(message);
+    } finally {
+      setTasksLoading(false);
+    }
+  }, []);
+
+  const loadJournal = useCallback(async () => {
+    setJournalLoading(true);
+    setJournalError(null);
+    try {
+      const data = await makeRequest<JournalResponse>("/api/journal");
+      setJournalEntries(Array.isArray(data.entries) ? data.entries : []);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Не удалось получить журнал";
+      setJournalError(message);
+    } finally {
+      setJournalLoading(false);
+    }
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center gap-8 px-6 py-10">
+      <header className="w-full max-w-3xl flex flex-col gap-2">
+        <h1 className="text-2xl font-semibold">TeleDrug MiniApp</h1>
+        <p className="text-sm text-slate-300">
+          Авторизация через Telegram и iron-session. После успешного входа можно выполнять запросы
+          к базе данных напрямую из интерфейса.
+        </p>
+      </header>
+
+      <section className="w-full max-w-3xl rounded-lg border border-slate-800 bg-slate-900/40 p-6 shadow-lg">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-medium">Состояние сессии</h2>
+            <p className="text-xs text-slate-400">Статус: {status === "authenticating" ? "авторизация" : status === "loading" ? "проверка" : "готово"}</p>
+          </div>
+          {session?.isAuthorized ? (
+            <button
+              className="rounded bg-red-500 px-3 py-1 text-sm font-medium text-white hover:bg-red-400 disabled:opacity-50"
+              onClick={handleLogout}
+              disabled={logoutPending}
+            >
+              {logoutPending ? "Выходим..." : "Выйти"}
+            </button>
+          ) : (
+            <button
+              className="rounded bg-blue-500 px-3 py-1 text-sm font-medium text-white hover:bg-blue-400 disabled:opacity-50"
+              onClick={handleRetryAuth}
+              disabled={status !== "idle"}
+            >
+              Повторить
+            </button>
+          )}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+
+        {error && (
+          <p className="mt-4 rounded bg-red-500/10 px-3 py-2 text-sm text-red-300">
+            {error}
+          </p>
+        )}
+
+        {session?.isAuthorized && session.telegram ? (
+          <dl className="mt-4 grid gap-2 text-sm text-slate-200">
+            <div className="flex justify-between gap-2">
+              <dt className="text-slate-400">Пользователь</dt>
+              <dd className="font-medium">{session.telegram.firstName} {session.telegram.lastName ?? ""}</dd>
+            </div>
+            {session.telegram.username && (
+              <div className="flex justify-between gap-2">
+                <dt className="text-slate-400">Username</dt>
+                <dd className="font-medium">@{session.telegram.username}</dd>
+              </div>
+            )}
+            <div className="flex justify-between gap-2">
+              <dt className="text-slate-400">ID</dt>
+              <dd className="font-mono">{session.telegram.id}</dd>
+            </div>
+          </dl>
+        ) : (
+          <p className="mt-4 text-sm text-slate-300">
+            Для работы UI необходимо запустить мини-приложение внутри Telegram, чтобы передать initData.
+          </p>
+        )}
+      </section>
+
+      {session?.isAuthorized ? (
+        <div className="w-full max-w-3xl grid gap-6 md:grid-cols-2">
+          <section className="rounded-lg border border-slate-800 bg-slate-900/40 p-6 shadow-lg">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-medium">Задачи</h3>
+              <button
+                className="rounded bg-emerald-500 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-400 disabled:opacity-50"
+                onClick={loadTasks}
+                disabled={tasksLoading}
+              >
+                {tasksLoading ? "Загружаем..." : "Обновить"}
+              </button>
+            </div>
+            {tasksError ? (
+              <p className="mt-3 rounded bg-red-500/10 px-3 py-2 text-sm text-red-300">{tasksError}</p>
+            ) : (
+              <pre className="mt-3 max-h-56 overflow-auto rounded bg-slate-950/60 p-3 text-xs text-slate-100">
+{JSON.stringify(tasks, null, 2)}
+              </pre>
+            )}
+          </section>
+
+          <section className="rounded-lg border border-slate-800 bg-slate-900/40 p-6 shadow-lg">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-medium">Журнал</h3>
+              <button
+                className="rounded bg-emerald-500 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-400 disabled:opacity-50"
+                onClick={loadJournal}
+                disabled={journalLoading}
+              >
+                {journalLoading ? "Загружаем..." : "Обновить"}
+              </button>
+            </div>
+            {journalError ? (
+              <p className="mt-3 rounded bg-red-500/10 px-3 py-2 text-sm text-red-300">{journalError}</p>
+            ) : (
+              <pre className="mt-3 max-h-56 overflow-auto rounded bg-slate-950/60 p-3 text-xs text-slate-100">
+{JSON.stringify(journalEntries, null, 2)}
+              </pre>
+            )}
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

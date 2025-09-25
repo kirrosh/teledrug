@@ -22,6 +22,7 @@ export type ConversationMessage = Schema.Schema.Type<typeof ConversationMessageS
 // Configuration schemas
 export const BotConfigSchema = Schema.Struct({
   telegramToken: Schema.String,
+  webAppUrl: Schema.optional(Schema.String),
 })
 
 export type BotConfig = Schema.Schema.Type<typeof BotConfigSchema>

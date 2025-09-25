@@ -8,6 +8,7 @@
     "apps/*"
   ],
   "devDependencies": {
+    "@ngrok/ngrok": "^1.5.2",
     "@types/bun": "latest",
     "drizzle-kit": "^0.31.4",
     "typescript": "5.9.2"
@@ -21,6 +22,8 @@
     "digest:evening": "bun run --filter @teledrug/daily-greeting start:evening",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
-    "db:studio": "drizzle-kit studio --config drizzle.config.ts"
+    "db:studio": "drizzle-kit studio --config drizzle.config.ts",
+    "miniapp:dev": "bun run --filter miniapp dev -- --port 3001",
+    "miniapp:stack": "bun run scripts/dev-miniapp-with-bot.ts"
   }
 }

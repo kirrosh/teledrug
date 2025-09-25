@@ -1,5 +1,5 @@
 import { Effect, Context, Layer } from "effect";
-import { Bot } from "grammy";
+import { Bot, InlineKeyboard } from "grammy";
 import type { InlineKeyboardMarkup } from "grammy/types";
 import { TelegramClientError } from "../errors";
 import { UserConfigStorage } from "./user-config-storage";
@@ -127,6 +127,36 @@ const makeTelegramClient = (config: BotConfig) =>
           "🤖 Привет! Я AI-ассистент на Effect Framework.\n\n" +
             "Это минимальная версия бота для первой итерации миграции.\n" +
             "Просто напишите мне сообщение!"
+        );
+      });
+
+      bot.command("app", async (ctx) => {
+        if (ctx.chat.type !== "private") {
+          await ctx.reply(
+            "Давайте перейдем в личные сообщения! 💬\n\nНапишите мне напрямую, и я помогу настроить ваши события."
+          );
+          return;
+        }
+
+        const webAppUrl = config.webAppUrl?.trim();
+
+        if (!webAppUrl) {
+          await ctx.reply(
+            "Переменная окружения WEBAPP_URL не задана. Укажите адрес мини-приложения, чтобы открыть его через команду /app."
+          );
+          return;
+        }
+
+        const keyboard = new InlineKeyboard().webApp(
+          "🚀 Открыть Mini App",
+          webAppUrl
+        );
+
+        await ctx.reply(
+          "🚀 Готово! Нажмите кнопку ниже и откройте удобное приложение для управления событиями:",
+          {
+            reply_markup: keyboard,
+          }
         );
       });
 
