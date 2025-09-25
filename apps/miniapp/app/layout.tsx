@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ViewTransitions } from "next-view-transitions";
 import Script from "next/script";
+
+import { BottomNav } from "@/components/BottomNav";
+
 import "./globals.css";
 
 const geistSans = Geist({
@@ -24,16 +28,21 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        <Script
-          src="https://telegram.org/js/telegram-web-app.js"
-          strategy="beforeInteractive"
-        />
-        {children}
-      </body>
-    </html>
+    <ViewTransitions>
+      <html lang="en" suppressHydrationWarning>
+        <body className={`${geistSans.variable} ${geistMono.variable} bg-slate-950 antialiased`}>
+          <Script
+            src="https://telegram.org/js/telegram-web-app.js"
+            strategy="beforeInteractive"
+          />
+          <div className="mx-auto flex min-h-screen w-full max-w-md flex-col text-slate-100">
+            <main className="flex-1 pb-24 pt-8" data-slot="main">
+              {children}
+            </main>
+            <BottomNav />
+          </div>
+        </body>
+      </html>
+    </ViewTransitions>
   );
 }
