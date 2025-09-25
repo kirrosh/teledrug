@@ -24,6 +24,8 @@
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "db:studio": "drizzle-kit studio --config drizzle.config.ts",
     "miniapp:dev": "bun run --filter miniapp dev -- --port 3001",
+    "miniapp:build": "bun run --filter miniapp build",
+    "miniapp:start": "bun run --filter miniapp start",
     "miniapp:stack": "bun run scripts/dev-miniapp-with-bot.ts"
   }
 }
