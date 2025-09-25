@@ -66,7 +66,7 @@ export interface CreateJournalEntryResult {
     title: string;
     dueAt?: string | null;
   }>;
-  readonly completeSuggestions?: ReadonlyArray<{ title: string }>;
+  readonly completeSuggestions?: ReadonlyArray<{ title: string; id?: number }>;
 }
 
 const escapeMarkdown = (value: string): string =>
@@ -115,60 +115,19 @@ const formatCreateJournalEntryResult: ToolResultFormatter = (output) =>
           .join(" ")}`
       : "";
 
-    const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
-    const completeSuggestions = Array.isArray(data.completeSuggestions)
-      ? data.completeSuggestions
-      : [];
-
-    const suggestionLines = suggestions.length
-      ? `\n\n🧩 Предложения задач:\n${suggestions
-          .slice(0, 5)
-          .map(
-            (s) =>
-              `• ${escapeMarkdown(s.title)}${
-                s.dueAt
-                  ? ` — до ${escapeMarkdown(
-                      new Date(s.dueAt).toLocaleDateString("ru-RU")
-                    )}`
-                  : ""
-              }`
-          )
-          .join("\n")}`
-      : "";
-    const completeLines = completeSuggestions.length
-      ? `\n\n✅ Возможно выполнено:\n${completeSuggestions
-          .map((c) => `• ${escapeMarkdown(c.title)}`)
-          .join("\n")}`
-      : "";
-
     const text = `${data.moodEmoji} ${data.energyEmoji} *${escapeMarkdown(
       data.title
-    )}*\n_${escapeMarkdown(
-      dateLabel
-    )}_\n\n${body}${tagsLine}${suggestionLines}${completeLines}`;
+    )}*\n_${escapeMarkdown(dateLabel)}_\n\n${body}${tagsLine}`;
 
-    // Inline buttons: optional quick-create for a single suggestion, and delete
-    const buttons: Array<Array<{ text: string; callback_data: string }>> = [];
-    if (suggestions.length === 1 && suggestions[0]) {
-      const ymd = suggestions[0].dueAt
-        ? new Date(suggestions[0].dueAt)
-            .toISOString()
-            .slice(0, 10)
-            .replace(/-/g, "")
-        : "0";
-      buttons.push([
+    // Inline buttons: quick delete for the created entry
+    const buttons: Array<Array<{ text: string; callback_data: string }>> = [
+      [
         {
-          text: "➕ Создать задачу",
-          callback_data: `journal:createTask:${data.entryId}:${ymd}`,
+          text: "🗑 Удалить",
+          callback_data: `journal:delete:${data.entryId}`,
         },
-      ]);
-    }
-    buttons.push([
-      {
-        text: "🗑 Удалить",
-        callback_data: `journal:delete:${data.entryId}`,
-      },
-    ]);
+      ],
+    ];
 
     return {
       text,
@@ -195,7 +154,9 @@ export const createJournalTools = (userId: number) =>
       existingTasks: ReadonlyArray<{ id: number; title: string }>
     ) =>
       Effect.tryPromise(async () => {
-        const existing = existingTasks.map((t) => `- ${t.title}`).join("\n");
+        const existing = existingTasks
+          .map((t) => `- #${t.id} — ${t.title}`)
+          .join("\n");
         const system = `Ты помощник по планированию. На входе — текст дневниковой записи пользователя и список его актуальных задач. Задача — предложить задачи для создания и кандидатов на завершение. Верни данные строго по схеме.`;
         const user = `Запись:\n"""\n${content}\n"""\n\nАктуальные задачи:\n${
           existing || "(нет)"
@@ -213,6 +174,7 @@ export const createJournalTools = (userId: number) =>
             .array(
               z.object({
                 title: z.string().min(1),
+                id: z.number().int().positive().optional(),
               })
             )
             .default([]),
@@ -230,7 +192,7 @@ export const createJournalTools = (userId: number) =>
           complete: object.complete.slice(0, 5),
         } as {
           create: Array<{ title: string; dueAt?: string | null }>;
-          complete: Array<{ title: string }>;
+          complete: Array<{ title: string; id?: number }>;
         };
       }).pipe(
         Effect.catchAll(() => Effect.succeed({ create: [], complete: [] }))
@@ -299,6 +261,7 @@ export const createJournalTools = (userId: number) =>
             suggestions,
             completeSuggestions: ai.complete.map((c) => ({
               title: c.title.trim(),
+              id: c.id,
             })),
           };
 

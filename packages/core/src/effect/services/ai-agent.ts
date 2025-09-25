@@ -55,7 +55,7 @@ export interface AIAgent {
 }
 
 export interface AIAgentResponse {
-  readonly result: GenerateTextResult<any, any>;
+  readonly executions: ReadonlyArray<AgentExecution>;
   readonly toolFormatters: Record<string, ToolResultFormatter>;
   readonly toolProgressMessages: Record<string, string>;
 }
@@ -101,7 +101,7 @@ const domainAgentDefinitions: Record<DomainAgentType, DomainAgentDefinition> = {
       "Управляет задачами пользователя: создаёт, обновляет, завершает и показывает списки.",
     buildSystemPrompt: (context, _toolNames) => {
       const interactionHint = buildInteractionHint(context);
-      return `Ты — агент задач TeleDrug. Управляй списком задач пользователя, помогай создавать, обновлять, завершать и переносить задачи. Говори по-русски, будь кратким и вежливым. Если инструментов нет, сообщи пользователю, что пока не можешь выполнить действие и предложи альтернативу. ${interactionHint}`.trim();
+      return `Ты — агент задач TeleDrug. Управляй списком задач пользователя, помогай создавать, обновлять, завершать и переносить задачи. Всё взаимодействие проходит через единый инструмент manageTasks: в нём указывай списки create, update, complete, delete и reschedule. Вноси в инструмент только итоговое решение по сообщению пользователя и следи, чтобы обновления ссылались на id из списка открытых задач. Всегда создавай отдельную запись в create для каждого нового поручения. Если нужно завершить или удалить задачу, используй её id. Говори по-русски, будь краток и вежлив. Если инструментов нет, сообщи пользователю, что пока не можешь выполнить действие и предложи альтернативу. ${interactionHint}`.trim();
     },
   },
   calendar: {
@@ -249,7 +249,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
           );
         }
 
-        let chosenExecution: AgentExecution | undefined;
+        const successfulExecutions: AgentExecution[] = [];
 
         for (const agentKind of executionOrder) {
           const definition = domainAgentDefinitions[agentKind];
@@ -286,35 +286,48 @@ const makeAIAgent = (config: AIAgentConfig) =>
             execution.result.toolResults &&
             execution.result.toolResults.length > 0;
 
-          chosenExecution = execution;
-
           if ((resultText && resultText.length > 0) || hasToolResults) {
+            successfulExecutions.push(execution);
             yield* Effect.sync(() =>
               console.log(`✅ Agent ${agentKind} produced a response`)
             );
-            break;
+          } else {
+            yield* Effect.sync(() =>
+              console.log(
+                `ℹ️ Agent ${agentKind} did not provide actionable output, moving to next`
+              )
+            );
           }
-
-          yield* Effect.sync(() =>
-            console.log(
-              `ℹ️ Agent ${agentKind} did not provide actionable output, moving to next`
-            )
-          );
         }
 
-        if (!chosenExecution) {
-          chosenExecution = yield* runFallbackAgent(
+        if (successfulExecutions.length === 0) {
+          const fallbackExecution = yield* runFallbackAgent(
             model,
             validatedConfig,
             validatedContext,
             baseMessages
           );
+          successfulExecutions.push(fallbackExecution);
         }
 
+        const combinedFormatters = successfulExecutions.reduce<
+          Record<string, ToolResultFormatter>
+        >((acc, execution) => ({ ...acc, ...execution.toolFormatters }), {});
+
+        const combinedProgressMessages = successfulExecutions.reduce<
+          Record<string, string>
+        >(
+          (acc, execution) => ({
+            ...acc,
+            ...execution.toolProgressMessages,
+          }),
+          {}
+        );
+
         return {
-          result: chosenExecution.result,
-          toolFormatters: chosenExecution.toolFormatters,
-          toolProgressMessages: chosenExecution.toolProgressMessages,
+          executions: successfulExecutions,
+          toolFormatters: combinedFormatters,
+          toolProgressMessages: combinedProgressMessages,
         } satisfies AIAgentResponse;
       });
 
@@ -425,6 +438,10 @@ const routeAgents = (
               role: "system",
               content:
                 "Ты — маршрутизатор TeleDrug. Выбирай только тех специализированных агентов, которые действительно нужны для ответа на запрос пользователя. Не добавляй агентов ради подстраховки. Если достаточно одного агента — верни массив с единственным именем. Если подходящих агентов нет, верни пустой массив." +
+                "\n\nПравила выбора:" +
+                "\n- Если пользователь перечисляет задачи, планы или поручения — обязательно добавь агента tasks." +
+                "\n- Если вместе с задачами пользователь делится эмоциями, переживаниями или делает заметку для дневника — выбери и tasks, и journal." +
+                "\n- Агента journal используй только для записей о состоянии, эмоциях и размышлениях без явных задач." +
                 "\nДоступные агенты и их обязанности:\n" +
                 systemPromptLines.join("\n"),
             },
@@ -479,6 +496,8 @@ const runDomainAgent = (
   Effect.gen(function* () {
     const toolNames = Object.keys(bundle.tools);
     const systemPrompt = definition.buildSystemPrompt(context, toolNames);
+    const contextMessages = bundle.contextMessages ?? [];
+    const agentMessages = [...contextMessages, ...baseMessages];
     const agent = new Agent({
       model: openai(config.model || "gpt-5-nano"),
       ...(toolNames.length > 0
@@ -487,19 +506,11 @@ const runDomainAgent = (
       maxOutputTokens: config.maxTokens,
     });
 
-    yield* Effect.sync(() => {
-      console.log(`📋 ${kind} agent system prompt:\n${systemPrompt}`);
-      console.log(
-        `🗂️ ${kind} agent messages:`,
-        baseMessages.map((message) => ({ ...message }))
-      );
-    });
-
     const result = yield* Effect.tryPromise({
       try: () =>
         agent.generate({
           system: systemPrompt,
-          messages: [...baseMessages],
+          messages: agentMessages,
         }),
       catch: (cause) =>
         new AIAgentError({

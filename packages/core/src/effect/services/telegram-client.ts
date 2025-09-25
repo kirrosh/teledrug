@@ -1,5 +1,5 @@
 import { Effect, Context, Layer } from "effect";
-import { Bot } from "grammy";
+import { Bot, InlineKeyboard } from "grammy";
 import type { InlineKeyboardMarkup } from "grammy/types";
 import { TelegramClientError } from "../errors";
 import { UserConfigStorage } from "./user-config-storage";
@@ -127,6 +127,36 @@ const makeTelegramClient = (config: BotConfig) =>
           "🤖 Привет! Я AI-ассистент на Effect Framework.\n\n" +
             "Это минимальная версия бота для первой итерации миграции.\n" +
             "Просто напишите мне сообщение!"
+        );
+      });
+
+      bot.command("app", async (ctx) => {
+        if (ctx.chat.type !== "private") {
+          await ctx.reply(
+            "Давайте перейдем в личные сообщения! 💬\n\nНапишите мне напрямую, и я помогу настроить ваши события."
+          );
+          return;
+        }
+
+        const webAppUrl = config.webAppUrl?.trim();
+
+        if (!webAppUrl) {
+          await ctx.reply(
+            "Переменная окружения WEBAPP_URL не задана. Укажите адрес мини-приложения, чтобы открыть его через команду /app."
+          );
+          return;
+        }
+
+        const keyboard = new InlineKeyboard().webApp(
+          "🚀 Открыть Mini App",
+          webAppUrl
+        );
+
+        await ctx.reply(
+          "🚀 Готово! Нажмите кнопку ниже и откройте удобное приложение для управления событиями:",
+          {
+            reply_markup: keyboard,
+          }
         );
       });
 
@@ -408,30 +438,50 @@ const makeTelegramClient = (config: BotConfig) =>
               history
             );
 
-            const { result, toolFormatters, toolProgressMessages } =
-              agentResponse;
+            const { executions, toolFormatters } = agentResponse;
 
-            if (result.toolCalls && result.toolCalls.length > 0) {
-              for (const call of result.toolCalls) {
+            const allToolCalls = executions.flatMap((execution) =>
+              execution.result.toolCalls ?? []
+            );
+
+            if (allToolCalls.length > 0) {
+              for (const call of allToolCalls) {
                 const completionMessage = `Инструмент ${call.toolName} выполнен`;
                 yield* updateProgress("✅", completionMessage);
               }
             }
 
             // Handle different response types from AI SDK v5
-            const baseText = result.text?.trim() || "";
+            const baseText = executions
+              .map((execution) => execution.result.text?.trim())
+              .filter((value): value is string => Boolean(value && value.length > 0))
+              .join("\n\n");
             let aggregatedResponse: AggregatedToolResponse | undefined;
 
-            if (result.toolResults && result.toolResults.length > 0) {
+            const allToolResults = executions.flatMap((execution) =>
+              execution.result.toolResults ?? []
+            );
+
+            if (allToolResults.length > 0) {
               console.log("🔧 Processing tool results to generate response...");
               aggregatedResponse = yield* generateResponseFromToolResults(
-                result.toolResults,
+                allToolResults,
                 toolFormatters
               );
             }
 
+            const textParts: string[] = [];
+            const aggregatedText = aggregatedResponse?.text?.trim();
+            if (aggregatedText && aggregatedText.length > 0) {
+              textParts.push(aggregatedText);
+            }
+            const baseTextValue = baseText.trim();
+            if (baseTextValue.length > 0) {
+              textParts.push(baseTextValue);
+            }
+
             const finalText =
-              (aggregatedResponse?.text || baseText)?.trim() ||
+              textParts.join("\n\n").trim() ||
               "❌ Извините, не удалось сформировать ответ.";
 
             const finalResponse: AggregatedToolResponse = {
@@ -490,14 +540,35 @@ const makeTelegramClient = (config: BotConfig) =>
       try {
         console.log("🚀 Запуск Telegram клиента...");
 
-        // Set bot commands
-        yield* Effect.promise(() =>
-          bot.api.setMyCommands([
-            { command: "start", description: "🚀 Запустить бота" },
-            { command: "clear", description: "🧹 Очистить историю" },
-            { command: "integrations", description: "📊 Показать интеграции" },
-          ])
-        );
+        const webAppUrl = config.webAppUrl?.trim();
+
+        const commands = [
+          { command: "start", description: "🚀 Запустить бота" },
+          { command: "clear", description: "🧹 Очистить историю" },
+          { command: "integrations", description: "📊 Показать интеграции" },
+        ];
+
+        if (webAppUrl) {
+          commands.push({ command: "app", description: "🚀 Открыть приложение" });
+        }
+
+        yield* Effect.promise(() => bot.api.setMyCommands(commands));
+
+        if (webAppUrl) {
+          yield* Effect.promise(() =>
+            bot.api.setChatMenuButton({
+              menu_button: {
+                type: "web_app",
+                text: "🚀 Открыть приложение",
+                web_app: { url: webAppUrl },
+              },
+            })
+          );
+        } else {
+          console.warn(
+            "WEBAPP_URL не задан. Пропускаем регистрацию кнопки меню Mini App."
+          );
+        }
 
         yield* Effect.promise(() => bot.start());
         console.log("✅ Telegram клиент запущен!");

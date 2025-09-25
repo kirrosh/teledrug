@@ -1,5 +1,6 @@
 import { Effect, Context, Layer } from "effect";
 import { Tool as AITool } from "ai";
+import type { CoreMessage } from "ai";
 import {
   InteractionType,
   IntegrationError,
@@ -22,6 +23,7 @@ export interface IntegrationToolsBundle {
   readonly tools: Record<string, AITool>;
   readonly formatters: Record<string, ToolResultFormatter>;
   readonly progressMessages: Record<string, string>;
+  readonly contextMessages?: ReadonlyArray<CoreMessage>;
 }
 
 export type DomainAgentType = "digest" | "journal" | "tasks" | "calendar";
@@ -69,6 +71,9 @@ const mergeBundles = (
       tools: { ...incoming.tools },
       formatters: { ...incoming.formatters },
       progressMessages: { ...incoming.progressMessages },
+      ...(incoming.contextMessages
+        ? { contextMessages: [...incoming.contextMessages] }
+        : {}),
     };
   }
 
@@ -79,6 +84,14 @@ const mergeBundles = (
       ...existing.progressMessages,
       ...incoming.progressMessages,
     },
+    ...(existing.contextMessages || incoming.contextMessages
+      ? {
+          contextMessages: [
+            ...(existing.contextMessages ?? []),
+            ...(incoming.contextMessages ?? []),
+          ],
+        }
+      : {}),
   };
 };
 
