@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { tool } from "ai";
+import type { CoreMessage } from "ai";
 import { z } from "zod";
 import type { ToolResultFormatter } from "../types/integrations";
 import { TaskRepository } from "../services/task-repository";
@@ -9,11 +10,6 @@ import type { Task } from "../../storage/database/schema";
 const AddTaskSchema = z.object({
   title: z.string().min(1),
   dueAt: z.string().datetime().optional(),
-});
-
-const ListTasksSchema = z.object({
-  scope: z.enum(["today", "overdue", "week", "open"]).default("today"),
-  limit: z.number().int().min(1).max(10).optional(),
 });
 
 const IdentifyTaskBaseSchema = z.object({
@@ -53,21 +49,56 @@ const UpdateTaskSchema = IdentifyTaskBaseSchema.extend({
 });
 
 const RescheduleTaskSchema = IdentifyTaskBaseSchema.extend({
-  shift: z.union([
-    z.literal("today"),
-    z.literal("tomorrow"),
-    z.literal("next_week"),
-    z.string().regex(/^\+\d{1,3}days$/i),
-  ]),
-}).superRefine((value, ctx) => ensureIdentifier(value, ctx));
+  shift: z
+    .union([
+      z.literal("today"),
+      z.literal("tomorrow"),
+      z.literal("next_week"),
+      z.string().regex(/^\+\d{1,3}days$/i),
+    ])
+    .optional(),
+  dueAt: z.union([z.string().datetime(), z.null()]).optional(),
+}).superRefine((value, ctx) => {
+  ensureIdentifier(value, ctx);
+  if (value.shift === undefined && value.dueAt === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Нужно указать новую дату или сдвиг",
+    });
+  }
+});
 
-type AddTaskInput = z.infer<typeof AddTaskSchema>;
-type ListTasksInput = z.infer<typeof ListTasksSchema>;
+const ManageTasksSchema = z
+  .object({
+    summary: z.string().optional(),
+    create: z.array(AddTaskSchema).default([]),
+    update: z.array(UpdateTaskSchema).default([]),
+    complete: z.array(IdentifyTaskSchema).default([]),
+    delete: z.array(IdentifyTaskSchema).default([]),
+    reschedule: z.array(RescheduleTaskSchema).default([]),
+  })
+  .superRefine((value, ctx) => {
+    const total =
+      value.create.length +
+      value.update.length +
+      value.complete.length +
+      value.delete.length +
+      value.reschedule.length;
+    if (total === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Нужно указать хотя бы одно действие",
+      });
+    }
+  });
+
+type ManageTasksInput = z.infer<typeof ManageTasksSchema>;
 type IdentifyTaskInput = z.infer<typeof IdentifyTaskSchema>;
 type UpdateTaskInput = z.infer<typeof UpdateTaskSchema>;
 type RescheduleTaskInput = z.infer<typeof RescheduleTaskSchema>;
 
-const escape = (v: string) => v.replace(/[\\_\*\[\]\(\)~`>#+=|{}.!-]/g, (m) => `\\${m}`);
+const escapeMarkdown = (value: string): string =>
+  value.replace(/[\\_\*\[\]\(\)~`>#+=|{}.!-]/g, (match) => `\\${match}`);
 
 type RepoTask = Task;
 
@@ -101,7 +132,7 @@ const parseShift = (shift: string): Date => {
     case "next_week": {
       const d = new Date(base);
       const day = d.getDay();
-      const diff = ((8 - day) % 7) || 7; // до следующего понедельника
+      const diff = ((8 - day) % 7) || 7;
       d.setDate(d.getDate() + diff);
       return d;
     }
@@ -117,51 +148,6 @@ const parseShift = (shift: string): Date => {
     }
   }
 };
-
-const formatAddResult: ToolResultFormatter = (output) =>
-  Effect.sync(() => {
-    if (!output || typeof output !== "object") return { text: "❌ Не удалось создать задачу" };
-    const result = output as { success?: boolean; data?: { id: number; title: string }; error?: string };
-    if (!result.success || !result.data) {
-      const err = result.error?.trim();
-      return { text: err ? `❌ ${escape(err)}` : "❌ Не удалось создать задачу", parseMode: "Markdown" };
-    }
-    return { text: `✅ Задача создана: *${escape(result.data.title)}*`, parseMode: "Markdown" };
-  });
-
-const formatListResult: ToolResultFormatter = (output) =>
-  Effect.sync(() => {
-    if (!output || typeof output !== "object") return { text: "❌ Не удалось получить список задач" };
-    const result = output as { success?: boolean; items?: Array<{ id: number; title: string; dueAt?: string | null }>; scope?: string };
-    if (!result.success || !result.items) return { text: "❌ Не удалось получить список задач" };
-    if (result.items.length === 0) return { text: "🧭 Задач нет" };
-    const lines = result.items.map((t) => `• ${escape(t.title)}${t.dueAt ? ` — до ${escape(new Date(t.dueAt).toLocaleDateString("ru-RU"))}` : ""}`).join("\n");
-    const header = result.scope === "overdue" ? "⏰ Просроченные задачи" : result.scope === "week" ? "🗓 Задачи на неделю" : "🧭 Сегодняшние задачи";
-    return { text: `*${header}*\n${lines}`, parseMode: "Markdown" };
-  });
-
-const formatMutationResult: ToolResultFormatter = (output) =>
-  Effect.sync(() => {
-    if (!output || typeof output !== "object") return { text: "❌ Операция не выполнена" };
-    const result = output as
-      | { success: true; message: string }
-      | { success?: false; error?: string; suggestions?: Array<{ id: number; title: string }> };
-
-    if (!result.success) {
-      if (result.suggestions && result.suggestions.length > 0) {
-        const lines = result.suggestions.map((task) => `• #${task.id} — ${escape(task.title)}`).join("\n");
-        return {
-          text: `⚠️ Найдено несколько задач:\n${lines}\nУточните номер задачи.`,
-          parseMode: "Markdown",
-        };
-      }
-
-      const message = result.error?.trim() || "Операция не выполнена";
-      return { text: `⚠️ ${escape(message)}` };
-    }
-
-    return { text: result.message, parseMode: "Markdown" };
-  });
 
 const toSuggestionList = (tasks: ReadonlyArray<RepoTask>) =>
   tasks.map((task) => ({ id: task.id, title: task.title }));
@@ -196,319 +182,388 @@ const resolveTask = (
     return { kind: "many", tasks: matches } as const;
   });
 
+interface ManageTasksSummary {
+  readonly created: Array<{ id: number; title: string; dueAt?: string | null }>;
+  readonly updated: Array<{ id: number; title: string; changes: ReadonlyArray<string> }>;
+  readonly completed: Array<{ id: number; title: string }>;
+  readonly deleted: Array<{ id: number; title: string }>;
+  readonly rescheduled: Array<{ id: number; title: string; dueAt?: string | null }>;
+}
+
+interface ManageTasksResult {
+  readonly success: boolean;
+  readonly summary: ManageTasksSummary;
+  readonly errors: ReadonlyArray<string>;
+  readonly notes?: ReadonlyArray<string>;
+}
+
+const emptySummary = (): ManageTasksSummary => ({
+  created: [],
+  updated: [],
+  completed: [],
+  deleted: [],
+  rescheduled: [],
+});
+
+const applyManageTasks = (
+  repo: TaskRepositoryService,
+  userId: number,
+  input: ManageTasksInput
+) =>
+  Effect.gen(function* () {
+    const summary = emptySummary();
+    const errors: string[] = [];
+    const notes: string[] = [];
+
+    for (const createInput of input.create) {
+      try {
+        const dueAtValue = createInput.dueAt ? new Date(createInput.dueAt) : null;
+        if (dueAtValue && Number.isNaN(dueAtValue.getTime())) {
+          errors.push(
+            `Создание задачи "${createInput.title}": некорректная дата ${createInput.dueAt}`
+          );
+          continue;
+        }
+        const task = yield* repo.create({
+          userId,
+          title: createInput.title.trim(),
+          dueAt: dueAtValue,
+        });
+        summary.created.push({
+          id: task.id,
+          title: task.title,
+          dueAt: task.dueAt ? new Date(task.dueAt).toISOString() : null,
+        });
+      } catch (cause) {
+        const message =
+          cause instanceof Error && cause.message
+            ? cause.message
+            : "Не удалось создать задачу";
+        errors.push(`Создание задачи "${createInput.title}": ${message}`);
+      }
+    }
+
+    const handleTaskResolution = (
+      resolved: ResolveResult,
+      identifier: IdentifyTaskInput,
+      action: string
+    ) => {
+      switch (resolved.kind) {
+        case "none":
+          errors.push(`${action}: задача не найдена`);
+          return undefined;
+        case "many": {
+          const options = toSuggestionList(resolved.tasks)
+            .map((task) => `#${task.id} — ${task.title}`)
+            .join("\n");
+          errors.push(
+            `${action}: найдено несколько вариантов. Уточните id.\n${options}`
+          );
+          return undefined;
+        }
+        case "one":
+          return resolved.task;
+      }
+    };
+
+    for (const completeInput of input.complete) {
+      const resolved = yield* resolveTask(repo, userId, completeInput);
+      const task = handleTaskResolution(resolved, completeInput, "Завершение задачи");
+      if (!task) continue;
+      const ok = yield* repo.complete(task.id, userId);
+      if (!ok) {
+        errors.push(`Не удалось завершить задачу #${task.id}`);
+        continue;
+      }
+      summary.completed.push({ id: task.id, title: task.title });
+    }
+
+    for (const deleteInput of input.delete) {
+      const resolved = yield* resolveTask(repo, userId, deleteInput);
+      const task = handleTaskResolution(resolved, deleteInput, "Удаление задачи");
+      if (!task) continue;
+      const ok = yield* repo.delete(task.id, userId);
+      if (!ok) {
+        errors.push(`Не удалось удалить задачу #${task.id}`);
+        continue;
+      }
+      summary.deleted.push({ id: task.id, title: task.title });
+    }
+
+    for (const updateInput of input.update) {
+      const resolved = yield* resolveTask(repo, userId, updateInput);
+      const original = handleTaskResolution(resolved, updateInput, "Обновление задачи");
+      if (!original) continue;
+
+      const dueAt =
+        updateInput.set.dueAt === undefined
+          ? undefined
+          : updateInput.set.dueAt === null
+          ? null
+          : new Date(updateInput.set.dueAt);
+
+      if (dueAt instanceof Date && Number.isNaN(dueAt.getTime())) {
+        errors.push(
+          `Обновление задачи: некорректная дата ${updateInput.set.dueAt}`
+        );
+        continue;
+      }
+
+      try {
+        const updated = yield* repo.update(original.id, userId, {
+          title: updateInput.set.title,
+          dueAt,
+          status: updateInput.set.status,
+        });
+
+        const changes: string[] = [];
+        if (updateInput.set.title && updateInput.set.title.trim() !== original.title.trim()) {
+          changes.push(`название → ${updateInput.set.title.trim()}`);
+        }
+        if (updateInput.set.status && updateInput.set.status !== original.status) {
+          const label =
+            updateInput.set.status === "done"
+              ? "✅ выполнена"
+              : updateInput.set.status === "cancelled"
+              ? "🚫 отменена"
+              : "🗓 активна";
+          changes.push(`статус → ${label}`);
+        }
+        if (updateInput.set.dueAt !== undefined) {
+          const dueLabel = formatDueDate(dueAt ?? null);
+          changes.push(`срок → ${dueLabel}`);
+        }
+
+        summary.updated.push({
+          id: updated.id,
+          title: updated.title,
+          changes,
+        });
+      } catch (cause) {
+        const message =
+          cause instanceof Error && cause.message
+            ? cause.message
+            : "Не удалось обновить задачу";
+        errors.push(`Обновление задачи #${original.id}: ${message}`);
+      }
+    }
+
+    for (const rescheduleInput of input.reschedule) {
+      const resolved = yield* resolveTask(repo, userId, rescheduleInput);
+      const original = handleTaskResolution(
+        resolved,
+        rescheduleInput,
+        "Перенос задачи"
+      );
+      if (!original) continue;
+
+      let dueAt: Date | null | undefined;
+      if (rescheduleInput.dueAt !== undefined) {
+        if (rescheduleInput.dueAt === null) {
+          dueAt = null;
+        } else {
+          const date = new Date(rescheduleInput.dueAt);
+          if (Number.isNaN(date.getTime())) {
+            errors.push(
+              `Перенос задачи: некорректная дата ${rescheduleInput.dueAt}`
+            );
+            continue;
+          }
+          dueAt = date;
+        }
+      } else if (rescheduleInput.shift) {
+        dueAt = parseShift(rescheduleInput.shift.toLowerCase());
+      }
+
+      if (dueAt === undefined) {
+        errors.push(`Перенос задачи #${original.id}: не указано новое время`);
+        continue;
+      }
+
+      try {
+        const updated = yield* repo.update(original.id, userId, {
+          dueAt,
+        });
+        summary.rescheduled.push({
+          id: updated.id,
+          title: updated.title,
+          dueAt: updated.dueAt ? new Date(updated.dueAt).toISOString() : null,
+        });
+      } catch (cause) {
+        const message =
+          cause instanceof Error && cause.message
+            ? cause.message
+            : "Не удалось перенести задачу";
+        errors.push(`Перенос задачи #${original.id}: ${message}`);
+      }
+    }
+
+    if (input.summary && input.summary.trim().length > 0) {
+      notes.push(input.summary.trim());
+    }
+
+    return {
+      success: errors.length === 0,
+      summary,
+      errors,
+      notes: notes.length > 0 ? notes : undefined,
+    } satisfies ManageTasksResult;
+  });
+
+const formatManageResult: ToolResultFormatter = (output) =>
+  Effect.sync(() => {
+    if (!output || typeof output !== "object") {
+      return { text: "❌ Не удалось обработать задачи" };
+    }
+
+    const result = output as ManageTasksResult;
+    const sections: string[] = [];
+
+    const formatTaskLine = (task: { id: number; title: string }, extra?: string) =>
+      `• #${task.id} — ${escapeMarkdown(task.title)}${extra ? ` (${extra})` : ""}`;
+
+    if (result.summary.created.length > 0) {
+      const lines = result.summary.created
+        .map((task) =>
+          formatTaskLine(
+            task,
+            task.dueAt ? `до ${escapeMarkdown(formatDueDate(task.dueAt))}` : undefined
+          )
+        )
+        .join("\n");
+      sections.push(`➕ Созданы задачи:\n${lines}`);
+    }
+
+    if (result.summary.updated.length > 0) {
+      const lines = result.summary.updated
+        .map((task) => {
+          const changes = task.changes.length
+            ? ` — ${task.changes
+                .map((change) => escapeMarkdown(change))
+                .join(", ")}`
+            : "";
+          return formatTaskLine(task) + changes;
+        })
+        .join("\n");
+      sections.push(`✏️ Обновлены задачи:\n${lines}`);
+    }
+
+    if (result.summary.completed.length > 0) {
+      const lines = result.summary.completed
+        .map((task) => formatTaskLine(task))
+        .join("\n");
+      sections.push(`✅ Завершены задачи:\n${lines}`);
+    }
+
+    if (result.summary.deleted.length > 0) {
+      const lines = result.summary.deleted
+        .map((task) => formatTaskLine(task))
+        .join("\n");
+      sections.push(`🗑 Удалены задачи:\n${lines}`);
+    }
+
+    if (result.summary.rescheduled.length > 0) {
+      const lines = result.summary.rescheduled
+        .map((task) =>
+          formatTaskLine(
+            task,
+            task.dueAt
+              ? `новый срок ${escapeMarkdown(formatDueDate(task.dueAt))}`
+              : "без срока"
+          )
+        )
+        .join("\n");
+      sections.push(`🗓 Перенесены задачи:\n${lines}`);
+    }
+
+    if (result.notes && result.notes.length > 0) {
+      sections.push(
+        result.notes.length === 1
+          ? `📝 Комментарий: ${escapeMarkdown(result.notes[0])}`
+          : `📝 Комментарии:\n${result.notes
+              .map((note) => `• ${escapeMarkdown(note)}`)
+              .join("\n")}`
+      );
+    }
+
+    if (result.errors.length > 0) {
+      sections.push(
+        `⚠️ Ошибки:\n${result.errors
+          .map((error) => escapeMarkdown(error))
+          .join("\n")}`
+      );
+    }
+
+    const text = sections.length
+      ? sections.join("\n\n")
+      : "ℹ️ Не потребовалось менять задачи.";
+
+    return { text, parseMode: "Markdown" };
+  });
+
 export const createTaskTools = (userId: number) =>
   Effect.gen(function* () {
     const repo = yield* TaskRepository;
 
-    const addTool = tool({
-      description: "Создаёт задачу из фразы (заголовок, дедлайн, теги)",
-      inputSchema: AddTaskSchema,
+    const manageTool = tool({
+      description:
+        "Синхронизирует список задач: передай списки на создание, обновление, завершение, удаление или перенос.",
+      inputSchema: ManageTasksSchema,
       execute: async (raw) => {
-        const input = AddTaskSchema.parse(raw);
-        const effect = repo
-          .create({
-            userId,
-            title: input.title,
-            dueAt: input.dueAt ? new Date(input.dueAt) : null,
-          })
-          .pipe(
-          Effect.map((task) => ({ success: true as const, data: { id: task.id, title: task.title } })),
-          Effect.catchAll((e) => Effect.succeed({ success: false as const, error: e.message }))
-        );
-        return await Effect.runPromise(effect);
-      },
-    });
-
-    const listTool = tool({
-      description: "Показывает задачи (сегодня/просрочено/неделя)",
-      inputSchema: ListTasksSchema,
-      execute: async (raw) => {
-        const input = ListTasksSchema.parse(raw);
-        const scope = input.scope ?? "today";
-        const effect = Effect.gen(function* () {
-          if (scope === "today") {
-            const items = yield* repo.listForToday(userId, input.limit ?? 10);
-            return { success: true as const, items: items.map((t) => ({ id: t.id, title: t.title, dueAt: t.dueAt ? new Date(t.dueAt).toISOString() : null })), scope };
-          }
-          if (scope === "overdue") {
-            const all = yield* repo.listOpen(userId, 200);
-            const now = Date.now();
-            const items = all
-              .filter((t) => t.dueAt && new Date(t.dueAt).getTime() < now)
-              .sort((a, b) => new Date(a.dueAt!).getTime() - new Date(b.dueAt!).getTime());
-            return { success: true as const, items: items.map((t) => ({ id: t.id, title: t.title, dueAt: t.dueAt ? new Date(t.dueAt).toISOString() : null })), scope };
-          }
-          if (scope === "week") {
-            const items = yield* repo.listOpen(userId, 100);
-            const now = new Date();
-            const start = new Date(now);
-            start.setHours(0, 0, 0, 0);
-            const end = new Date(start);
-            end.setDate(end.getDate() + 7);
-            const filtered = items.filter((t) => {
-              if (!t.dueAt) return false;
-              const due = new Date(t.dueAt);
-              return due >= start && due <= end;
-            });
-            const normalized = filtered
-              .sort((a, b) => new Date(a.dueAt!).getTime() - new Date(b.dueAt!).getTime())
-              .slice(0, input.limit ?? 10);
-            return {
-              success: true as const,
-              items: normalized.map((t) => ({
-                id: t.id,
-                title: t.title,
-                dueAt: t.dueAt ? new Date(t.dueAt).toISOString() : null,
-              })),
-              scope,
-            };
-          }
-
-          const items = yield* repo.listOpen(userId, input.limit ?? 10);
-          return {
-            success: true as const,
-            items: items.map((t) => ({
-              id: t.id,
-              title: t.title,
-              dueAt: t.dueAt ? new Date(t.dueAt).toISOString() : null,
-            })),
-            scope,
-          };
-        }).pipe(Effect.catchAll((e) => Effect.succeed({ success: false as const, error: e.message })));
-        return await Effect.runPromise(effect);
-      },
-    });
-
-    const completeTool = tool({
-      description: "Отмечает задачу выполненной",
-      inputSchema: IdentifyTaskSchema,
-      execute: async (raw) => {
-        const input = IdentifyTaskSchema.parse(raw);
-        const effect = resolveTask(repo, userId, input).pipe(
-          Effect.flatMap((resolved) =>
-            Effect.gen(function* () {
-              switch (resolved.kind) {
-                case "none":
-                  return {
-                    success: false as const,
-                    error: "Задача не найдена",
-                  };
-                case "many":
-                  return {
-                    success: false as const,
-                    suggestions: toSuggestionList(resolved.tasks),
-                  };
-                case "one": {
-                  const task = resolved.task;
-                  if (!task) {
-                    return {
-                      success: false as const,
-                      error: "Задача не найдена",
-                    };
-                  }
-                  const ok = yield* repo.complete(task.id, userId);
-                  if (!ok) {
-                    return {
-                      success: false as const,
-                      error: "Не удалось завершить задачу",
-                    };
-                  }
-                  return {
-                    success: true as const,
-                    message: `✅ Задача завершена: *${escape(task.title)}*`,
-                  };
-                }
-              }
-            })
-          ),
-          Effect.catchAll((e) =>
-            Effect.succeed({ success: false as const, error: e.message })
+        const input = ManageTasksSchema.parse(raw);
+        const effect = applyManageTasks(repo, userId, input).pipe(
+          Effect.catchAll((cause) =>
+            Effect.succeed({
+              success: false,
+              summary: emptySummary(),
+              errors: [
+                cause instanceof Error && cause.message
+                  ? cause.message
+                  : "Не удалось обработать задачи",
+              ],
+            } satisfies ManageTasksResult)
           )
         );
         return await Effect.runPromise(effect);
       },
     });
 
-    const deleteTool = tool({
-      description: "Удаляет задачу",
-      inputSchema: IdentifyTaskSchema,
-      execute: async (raw) => {
-        const input = IdentifyTaskSchema.parse(raw);
-        const effect = resolveTask(repo, userId, input).pipe(
-          Effect.flatMap((resolved) =>
-            Effect.gen(function* () {
-              switch (resolved.kind) {
-                case "none":
-                  return {
-                    success: false as const,
-                    error: "Задача не найдена",
-                  };
-                case "many":
-                  return {
-                    success: false as const,
-                    suggestions: toSuggestionList(resolved.tasks),
-                  };
-                case "one": {
-                  const task = resolved.task;
-                  if (!task) {
-                    return {
-                      success: false as const,
-                      error: "Задача не найдена",
-                    };
-                  }
-                  const ok = yield* repo.delete(task.id, userId);
-                  if (!ok) {
-                    return {
-                      success: false as const,
-                      error: "Не удалось удалить задачу",
-                    };
-                  }
-                  return {
-                    success: true as const,
-                    message: `🗑 Задача удалена: *${escape(task.title)}*`,
-                  };
-                }
-              }
-            })
-          ),
-          Effect.catchAll((e) =>
-            Effect.succeed({ success: false as const, error: e.message })
-          )
-        );
-        return await Effect.runPromise(effect);
-      },
-    });
+    const openTasksForContext = yield* repo
+      .listOpen(userId, 50)
+      .pipe(Effect.catchAll(() => Effect.succeed([] as RepoTask[])));
 
-    const updateTool = tool({
-      description: "Обновляет название, срок или статус задачи",
-      inputSchema: UpdateTaskSchema,
-      execute: async (raw) => {
-        const input = UpdateTaskSchema.parse(raw);
-        const effect = resolveTask(repo, userId, input).pipe(
-          Effect.flatMap((resolved) =>
-            Effect.gen(function* () {
-              switch (resolved.kind) {
-                case "none":
-                  return {
-                    success: false as const,
-                    error: "Задача не найдена",
-                  };
-                case "many":
-                  return {
-                    success: false as const,
-                    suggestions: toSuggestionList(resolved.tasks),
-                  };
-                case "one": {
-                  const task = resolved.task;
-                  if (!task) {
-                    return {
-                      success: false as const,
-                      error: "Задача не найдена",
-                    };
-                  }
-                  const dueAt =
-                    input.set.dueAt === undefined
-                      ? undefined
-                      : input.set.dueAt === null
-                      ? null
-                      : new Date(input.set.dueAt);
-
-                  const updated = yield* repo.update(task.id, userId, {
-                    title: input.set.title,
-                    dueAt,
-                    status: input.set.status,
-                  });
-
-                  const statusLabel = updated.status === "done" ? "✅ выполнена" : updated.status === "cancelled" ? "🚫 отменена" : "🗓 активна";
-                  const dueLabel = dueAt === undefined ? formatDueDate(updated.dueAt) : formatDueDate(dueAt);
-
-                  return {
-                    success: true as const,
-                    message: `✏️ Обновлено: *${escape(updated.title)}*\nСтатус: ${statusLabel}\nСрок: ${escape(dueLabel)}`,
-                  };
-                }
-              }
-            })
-          ),
-          Effect.catchAll((e) =>
-            Effect.succeed({ success: false as const, error: e.message })
-          )
-        );
-        return await Effect.runPromise(effect);
-      },
-    });
-
-    const rescheduleTool = tool({
-      description: "Переносит срок задачи на относительную дату",
-      inputSchema: RescheduleTaskSchema,
-      execute: async (raw) => {
-        const input = RescheduleTaskSchema.parse(raw);
-        const effect = resolveTask(repo, userId, input).pipe(
-          Effect.flatMap((resolved) =>
-            Effect.gen(function* () {
-              switch (resolved.kind) {
-                case "none":
-                  return {
-                    success: false as const,
-                    error: "Задача не найдена",
-                  };
-                case "many":
-                  return {
-                    success: false as const,
-                    suggestions: toSuggestionList(resolved.tasks),
-                  };
-                case "one": {
-                  const task = resolved.task;
-                  if (!task) {
-                    return {
-                      success: false as const,
-                      error: "Задача не найдена",
-                    };
-                  }
-                  const dueAt = parseShift(input.shift.toLowerCase());
-                  const updated = yield* repo.update(task.id, userId, {
-                    dueAt,
-                  });
-                  return {
-                    success: true as const,
-                    message: `🗓 Срок обновлён: *${escape(updated.title)}* — ${escape(formatDueDate(updated.dueAt))}`,
-                  };
-                }
-              }
-            })
-          ),
-          Effect.catchAll((e) =>
-            Effect.succeed({ success: false as const, error: e.message })
-          )
-        );
-        return await Effect.runPromise(effect);
-      },
-    });
+    const contextMessages: CoreMessage[] = openTasksForContext.length
+      ? [
+          {
+            role: "system",
+            content: [
+              "Вот актуальные незавершённые задачи пользователя.",
+              "Используй их, чтобы закрывать, обновлять или переносить элементы.",
+              "Формат: #id — название (срок).",
+              openTasksForContext
+                .map((task) => {
+                  const due = formatDueDate(task.dueAt);
+                  const title = task.title.replace(/\s+/g, " ").trim();
+                  return `#${task.id} — ${title}${due !== "—" ? ` (до ${due})` : ""}`;
+                })
+                .join("\n"),
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          },
+        ]
+      : [];
 
     return {
       tools: {
-        addTask: addTool,
-        listTasks: listTool,
-        completeTask: completeTool,
-        deleteTask: deleteTool,
-        updateTask: updateTool,
-        rescheduleTask: rescheduleTool,
+        manageTasks: manageTool,
       },
       formatters: {
-        addTask: formatAddResult,
-        listTasks: formatListResult,
-        completeTask: formatMutationResult,
-        deleteTask: formatMutationResult,
-        updateTask: formatMutationResult,
-        rescheduleTask: formatMutationResult,
+        manageTasks: formatManageResult,
       },
       progressMessages: {
-        addTask: "Создаю задачу...",
-        listTasks: "Получаю список задач...",
-        completeTask: "Отмечаю задачу выполненной...",
-        deleteTask: "Удаляю задачу...",
-        updateTask: "Обновляю задачу...",
-        rescheduleTask: "Переношу срок задачи...",
+        manageTasks: "Синхронизирую список задач...",
       },
+      contextMessages,
     } as const;
   });

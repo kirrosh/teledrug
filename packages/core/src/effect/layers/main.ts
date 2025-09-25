@@ -56,7 +56,7 @@ export const createMainLayer = (
     AIAgentFactoryLive({
       openaiApiKey: config.openaiApiKey,
       model: "gpt-5-nano",
-      maxTokens: 2000,
+      maxTokens: 3000,
       userId: "default",
     }),
     Layer.provide(integrationRegistry) // ✅ Явно предоставляем зависимость
