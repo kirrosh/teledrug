@@ -1,5 +1,18 @@
 import { Effect, Context, Layer, Data } from "effect";
-import { and, or, eq, gte, lte, isNull, ilike } from "drizzle-orm";
+import {
+  and,
+  or,
+  eq,
+  gte,
+  lte,
+  isNull,
+  ilike,
+  asc,
+  desc,
+  inArray,
+  isNotNull,
+  type SQL,
+} from "drizzle-orm";
 import { tasks, type Task, type NewTask } from "../../storage/database/schema";
 import { db } from "../../storage/database/client";
 
@@ -20,6 +33,16 @@ export interface TaskRepository {
   readonly listForToday: (userId: number, limit?: number) => Effect.Effect<ReadonlyArray<Task>, TaskRepositoryError>;
   readonly countOverdue: (userId: number, now?: Date) => Effect.Effect<number, TaskRepositoryError>;
   readonly listOpen: (userId: number, limit?: number) => Effect.Effect<ReadonlyArray<Task>, TaskRepositoryError>;
+  readonly listByFilters: (
+    userId: number,
+    filters: {
+      readonly status?: ReadonlyArray<string> | string;
+      readonly dueFrom?: Date;
+      readonly dueTo?: Date;
+      readonly includeWithoutDue?: boolean;
+      readonly limit?: number;
+    }
+  ) => Effect.Effect<ReadonlyArray<Task>, TaskRepositoryError>;
   readonly delete: (taskId: number, userId: number) => Effect.Effect<boolean, TaskRepositoryError>;
   readonly update: (
     taskId: number,
@@ -151,6 +174,77 @@ const makeTaskRepository = Effect.sync(() => {
       catch: (cause) => new TaskRepositoryError({ message: "Не удалось получить список задач", cause }),
     });
 
+  const listByFilters: TaskRepository["listByFilters"] = (
+    userId,
+    { status, dueFrom, dueTo, includeWithoutDue = false, limit = 50 }
+  ) =>
+    Effect.tryPromise({
+      try: async () => {
+        const normalizedLimit = Math.max(1, Math.min(limit, 200));
+        const statuses = Array.isArray(status)
+          ? status.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+          : typeof status === "string" && status.trim().length > 0
+          ? [status]
+          : undefined;
+
+        const conditions: Array<SQL<unknown>> = [eq(tasks.userId, userId)];
+
+        if (statuses && statuses.length > 0) {
+          const normalizedStatuses = Array.from(
+            new Set(statuses.map((value) => value.trim()))
+          );
+          if (normalizedStatuses.length > 0) {
+            const statusCondition =
+              normalizedStatuses.length === 1
+                ? eq(tasks.status, normalizedStatuses[0]!)
+                : inArray(tasks.status, normalizedStatuses);
+            conditions.push(statusCondition as SQL<unknown>);
+          }
+        }
+
+        if (dueFrom || dueTo) {
+          const dueClauses: Array<SQL<unknown>> = [];
+
+          if (!includeWithoutDue) {
+            dueClauses.push(isNotNull(tasks.dueAt));
+          }
+
+          if (dueFrom) {
+            dueClauses.push(gte(tasks.dueAt, dueFrom));
+          }
+
+          if (dueTo) {
+            dueClauses.push(lte(tasks.dueAt, dueTo));
+          }
+
+          if (dueClauses.length > 0) {
+            const dueCondition =
+              dueClauses.length === 1
+                ? dueClauses[0]!
+                : (and(...dueClauses) as SQL<unknown>);
+            conditions.push(dueCondition as SQL<unknown>);
+          }
+        }
+
+        const whereCondition =
+          conditions.length === 1 ? conditions[0]! : (and(...conditions) as SQL<unknown>);
+
+        const rows = await db
+          .select()
+          .from(tasks)
+          .where(whereCondition)
+          .orderBy(asc(tasks.dueAt), desc(tasks.createdAt))
+          .limit(normalizedLimit);
+
+        return rows;
+      },
+      catch: (cause) =>
+        new TaskRepositoryError({
+          message: "Не удалось получить список задач",
+          cause,
+        }),
+    });
+
   const deleteTask: TaskRepository["delete"] = (taskId, userId) =>
     Effect.tryPromise({
       try: async () => {
@@ -232,6 +326,7 @@ const makeTaskRepository = Effect.sync(() => {
     listForToday,
     countOverdue,
     listOpen,
+    listByFilters,
     delete: deleteTask,
     update: updateTask,
     findById,

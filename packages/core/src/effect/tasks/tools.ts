@@ -92,10 +92,51 @@ const ManageTasksSchema = z
     }
   });
 
+const TaskStatusEnum = z.enum(["todo", "done", "cancelled"]);
+
+const ListTasksSchema = z
+  .object({
+    status: z
+      .union([TaskStatusEnum, z.array(TaskStatusEnum).min(1).max(3)])
+      .optional(),
+    start: z.string().datetime().optional(),
+    end: z.string().datetime().optional(),
+    includeWithoutDue: z.boolean().optional(),
+    limit: z.number().int().min(1).max(200).default(50),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.start && !value.end) || (!value.start && value.end)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Нужно указать и дату начала, и дату окончания интервала",
+        path: value.start ? ["end"] : ["start"],
+      });
+      return;
+    }
+
+    if (value.start && value.end) {
+      const startDate = new Date(value.start);
+      const endDate = new Date(value.end);
+      if (startDate.getTime() > endDate.getTime()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Дата начала интервала не может быть позже даты окончания",
+          path: ["start"],
+        });
+      }
+    }
+  });
+
 type ManageTasksInput = z.infer<typeof ManageTasksSchema>;
+type ListTasksInput = z.infer<typeof ListTasksSchema>;
 type IdentifyTaskInput = z.infer<typeof IdentifyTaskSchema>;
 type UpdateTaskInput = z.infer<typeof UpdateTaskSchema>;
 type RescheduleTaskInput = z.infer<typeof RescheduleTaskSchema>;
+
+interface FormatDueDateOptions {
+  readonly locale?: string;
+  readonly timeZone?: string;
+}
 
 const escapeMarkdown = (value: string): string =>
   value.replace(/[\\_\*\[\]\(\)~`>#+=|{}.!-]/g, (match) => `\\${match}`);
@@ -107,14 +148,76 @@ type ResolveResult =
   | { readonly kind: "many"; readonly tasks: ReadonlyArray<RepoTask> }
   | { readonly kind: "none" };
 
-const formatDueDate = (dueAt: Date | string | null | undefined) => {
+const taskStatusEmoji: Record<string, string> = {
+  todo: "🟦",
+  done: "✅",
+  cancelled: "🚫",
+};
+
+const taskStatusLabel: Record<string, string> = {
+  todo: "активна",
+  done: "выполнена",
+  cancelled: "отменена",
+};
+
+type ListTasksTaskItem = {
+  id: number;
+  title: string;
+  status: string;
+  dueAt: string | null;
+};
+
+type ListTasksFilters = {
+  status?: ReadonlyArray<string>;
+  start?: string;
+  end?: string;
+  includeWithoutDue?: boolean;
+  limit: number;
+};
+
+type ListTasksContext = {
+  locale: string;
+  timezone: string;
+};
+
+type ListTasksSuccessResult = {
+  success: true;
+  tasks: ReadonlyArray<ListTasksTaskItem>;
+  filters: ListTasksFilters;
+  context: ListTasksContext;
+};
+
+type ListTasksFailureResult = {
+  success: false;
+  error: string;
+};
+
+type ListTasksResult = ListTasksSuccessResult | ListTasksFailureResult;
+
+const formatDueDate = (
+  dueAt: Date | string | null | undefined,
+  options: FormatDueDateOptions = {}
+) => {
   if (!dueAt) return "—";
   const date = dueAt instanceof Date ? dueAt : new Date(dueAt);
   if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString("ru-RU", {
+
+  const locale = options.locale ?? "ru-RU";
+  const formatterOptions: Intl.DateTimeFormatOptions = {
     day: "numeric",
     month: "long",
-  });
+  };
+
+  if (options.timeZone) {
+    formatterOptions.timeZone = options.timeZone;
+  }
+
+  const now = new Date();
+  if (date.getFullYear() !== now.getFullYear()) {
+    formatterOptions.year = "numeric";
+  }
+
+  return new Intl.DateTimeFormat(locale, formatterOptions).format(date);
 };
 
 const parseShift = (shift: string): Date => {
@@ -207,6 +310,7 @@ interface ManageTasksResult {
   readonly summary: ManageTasksSummary;
   readonly errors: ReadonlyArray<string>;
   readonly notes?: ReadonlyArray<string>;
+  readonly formatOptions?: FormatDueDateOptions;
 }
 
 const emptySummary = (): ManageTasksSummary => ({
@@ -220,7 +324,8 @@ const emptySummary = (): ManageTasksSummary => ({
 const applyManageTasks = (
   repo: TaskRepositoryService,
   userId: number,
-  input: ManageTasksInput
+  input: ManageTasksInput,
+  formatOptions?: FormatDueDateOptions
 ) =>
   Effect.gen(function* () {
     const summary = emptySummary();
@@ -362,7 +467,7 @@ const applyManageTasks = (
           changes.push(`статус → ${label}`);
         }
         if (updateInput.set.dueAt !== undefined) {
-          const dueLabel = formatDueDate(dueAt ?? null);
+          const dueLabel = formatDueDate(dueAt ?? null, formatOptions);
           changes.push(`срок → ${dueLabel}`);
         }
 
@@ -439,6 +544,7 @@ const applyManageTasks = (
       summary,
       errors,
       notes: notes.length > 0 ? notes : undefined,
+      formatOptions,
     } satisfies ManageTasksResult;
   });
 
@@ -465,7 +571,9 @@ const formatManageResult: ToolResultFormatter = (output) =>
           formatTaskLine(
             task,
             task.dueAt
-              ? `до ${escapeMarkdown(formatDueDate(task.dueAt))}`
+              ? `до ${escapeMarkdown(
+                  formatDueDate(task.dueAt, result.formatOptions)
+                )}`
               : undefined
           )
         )
@@ -507,7 +615,9 @@ const formatManageResult: ToolResultFormatter = (output) =>
           formatTaskLine(
             task,
             task.dueAt
-              ? `новый срок ${escapeMarkdown(formatDueDate(task.dueAt))}`
+              ? `новый срок ${escapeMarkdown(
+                  formatDueDate(task.dueAt, result.formatOptions)
+                )}`
               : "без срока"
           )
         )
@@ -546,9 +656,161 @@ const formatManageResult: ToolResultFormatter = (output) =>
     return { text, parseMode: "Markdown" };
   });
 
-export const createTaskTools = (userId: number) =>
+const formatListTasksResult: ToolResultFormatter = (output) =>
+  Effect.sync(() => {
+    if (!output || typeof output !== "object") {
+      return { text: "❌ Не удалось получить список задач." };
+    }
+
+    const result = output as ListTasksResult;
+
+    if (result.success !== true) {
+      const message = result.error?.trim();
+      return {
+        text: message
+          ? `❌ ${escapeMarkdown(message)}`
+          : "❌ Не удалось получить список задач.",
+        parseMode: "Markdown",
+      };
+    }
+
+    const { tasks, filters, context } = result;
+    const locale = context.locale;
+    const timezone = context.timezone;
+
+    const headerLines: string[] = [];
+    const filterParts: string[] = [];
+
+    if (filters.status && filters.status.length > 0) {
+      const statuses = filters.status.map((status) => {
+        const emoji = taskStatusEmoji[status] ?? "•";
+        const label = taskStatusLabel[status] ?? status;
+        return `${emoji} ${label}`;
+      });
+      filterParts.push(`по статусу: ${statuses.join(", ")}`);
+    }
+
+    if (filters.start && filters.end) {
+      const start = new Date(filters.start);
+      const end = new Date(filters.end);
+      if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())) {
+        const formatter = new Intl.DateTimeFormat(locale, {
+          dateStyle: "medium",
+          timeZone: timezone,
+        });
+        filterParts.push(
+          `период: ${formatter.format(start)} — ${formatter.format(end)}`
+        );
+      }
+    }
+
+    if (filters.includeWithoutDue) {
+      filterParts.push("включая задачи без срока");
+    }
+
+    headerLines.push(
+      `📋 Задачи (${tasks.length}${filters.limit ? ` / ${filters.limit}` : ""})`
+    );
+
+    if (filterParts.length > 0) {
+      headerLines.push(`Фильтры: ${filterParts.join("; ")}`);
+    }
+
+    if (tasks.length === 0) {
+      headerLines.push("ℹ️ Под условия не нашлось задач.");
+      return {
+        text: headerLines.map((line) => escapeMarkdown(line)).join("\n"),
+        parseMode: "Markdown",
+        metadata: {
+          filters,
+          count: 0,
+        },
+      };
+    }
+
+    const lines = tasks.map((task) => {
+      const emoji = taskStatusEmoji[task.status] ?? "•";
+      const title = escapeMarkdown(task.title.trim());
+      const dueLabel = formatDueDate(task.dueAt, {
+        locale,
+        timeZone: timezone,
+      });
+      const details: string[] = [];
+      if (dueLabel !== "—") {
+        details.push(`до ${escapeMarkdown(dueLabel)}`);
+      }
+      if (task.status !== "todo") {
+        details.push(taskStatusLabel[task.status] ?? task.status);
+      }
+      const suffix = details.length ? ` (${details.join(", ")})` : "";
+      return `${emoji} #${task.id} — ${title}${suffix}`;
+    });
+
+    const text = [
+      ...headerLines.map((line) => escapeMarkdown(line)),
+      ...lines,
+    ].join("\n");
+
+    return {
+      text,
+      parseMode: "Markdown",
+      metadata: {
+        filters,
+        count: tasks.length,
+        timezone,
+      },
+    };
+  });
+
+export interface TaskToolsOptions {
+  readonly userSettings?: {
+    readonly timezone?: string;
+    readonly locale?: string;
+    readonly preferences?: Record<string, unknown> | null;
+  };
+}
+
+export const createTaskTools = (
+  userId: number,
+  options: TaskToolsOptions = {}
+) =>
   Effect.gen(function* () {
     const repo = yield* TaskRepository;
+
+    const rawTimezone = options.userSettings?.timezone?.trim();
+    const rawLocale = options.userSettings?.locale?.trim();
+
+    const resolvedTimezone = (() => {
+      const fallback = "UTC";
+      if (!rawTimezone) return fallback;
+      try {
+        // Validate timezone; throws RangeError for invalid values.
+        new Intl.DateTimeFormat("en-US", { timeZone: rawTimezone }).format();
+        return rawTimezone;
+      } catch {
+        return fallback;
+      }
+    })();
+
+    const resolvedLocale = rawLocale && rawLocale.length > 0 ? rawLocale : "ru-RU";
+
+    const formatOptions: FormatDueDateOptions = {
+      locale: resolvedLocale,
+      timeZone: resolvedTimezone,
+    };
+
+    const now = new Date();
+    const isoNow = now.toISOString();
+    let localizedNow = isoNow;
+    try {
+      localizedNow = new Intl.DateTimeFormat(resolvedLocale, {
+        dateStyle: "full",
+        timeStyle: "short",
+        timeZone: resolvedTimezone,
+      }).format(now);
+    } catch {
+      // Keep ISO fallback if Intl fails
+    }
 
     const manageTool = tool({
       description:
@@ -556,7 +818,7 @@ export const createTaskTools = (userId: number) =>
       inputSchema: ManageTasksSchema,
       execute: async (raw) => {
         const input = ManageTasksSchema.parse(raw);
-        const effect = applyManageTasks(repo, userId, input).pipe(
+        const effect = applyManageTasks(repo, userId, input, formatOptions).pipe(
           Effect.catchAll((cause) =>
             Effect.succeed({
               success: false,
@@ -566,9 +828,76 @@ export const createTaskTools = (userId: number) =>
                   ? cause.message
                   : "Не удалось обработать задачи",
               ],
+              formatOptions,
             } satisfies ManageTasksResult)
           )
         );
+        return await Effect.runPromise(effect);
+      },
+    });
+
+    const listTool = tool({
+      description:
+        "Возвращает задачи пользователя по заданным фильтрам: статус, интервал дат, лимит выборки.",
+      inputSchema: ListTasksSchema,
+      execute: async (raw) => {
+        const input: ListTasksInput = ListTasksSchema.parse(raw);
+        const limit = input.limit ?? 50;
+        const statuses = input.status
+          ? Array.isArray(input.status)
+            ? Array.from(new Set(input.status))
+            : [input.status]
+          : undefined;
+
+        const dueFrom = input.start ? new Date(input.start) : undefined;
+        const dueTo = input.end ? new Date(input.end) : undefined;
+
+        const effect = repo
+          .listByFilters(userId, {
+            status: statuses,
+            dueFrom,
+            dueTo,
+            includeWithoutDue: input.includeWithoutDue ?? false,
+            limit,
+          })
+          .pipe(
+            Effect.map((tasks) => {
+              const result: ListTasksSuccessResult = {
+                success: true,
+                tasks: tasks.map((task) => ({
+                  id: task.id,
+                  title: task.title,
+                  status: task.status,
+                  dueAt: task.dueAt ? new Date(task.dueAt).toISOString() : null,
+                })),
+                filters: {
+                  status: statuses,
+                  start: input.start,
+                  end: input.end,
+                  includeWithoutDue: input.includeWithoutDue ?? false,
+                  limit,
+                },
+                context: {
+                  locale: resolvedLocale,
+                  timezone: resolvedTimezone,
+                },
+              };
+              return result;
+            })
+          )
+          .pipe(
+            Effect.catchAll((cause) => {
+              const fallback: ListTasksFailureResult = {
+                success: false,
+                error:
+                  cause instanceof Error && cause.message
+                    ? cause.message
+                    : "Не удалось получить список задач",
+              };
+              return Effect.succeed(fallback);
+            })
+          );
+
         return await Effect.runPromise(effect);
       },
     });
@@ -577,39 +906,54 @@ export const createTaskTools = (userId: number) =>
       .listOpen(userId, 50)
       .pipe(Effect.catchAll(() => Effect.succeed([] as RepoTask[])));
 
-    const contextMessages: CoreMessage[] = openTasksForContext.length
-      ? [
-          {
-            role: "system",
-            content: [
-              "Вот актуальные незавершённые задачи пользователя.",
-              "Используй их, чтобы закрывать, обновлять или переносить элементы.",
-              "Формат: #id — название (срок).",
-              openTasksForContext
-                .map((task) => {
-                  const due = formatDueDate(task.dueAt);
-                  const title = task.title.replace(/\s+/g, " ").trim();
-                  return `#${task.id} — ${title}${
-                    due !== "—" ? ` (до ${due})` : ""
-                  }`;
-                })
-                .join("\n"),
-            ]
-              .filter(Boolean)
-              .join("\n"),
-          },
+    const contextMessages: CoreMessage[] = [
+      {
+        role: "system",
+        content: [
+          `Текущая дата и время пользователя: ${localizedNow} (${resolvedTimezone}).`,
+          `ISO-время сейчас: ${isoNow}.`,
+          `Предпочитаемая локаль: ${resolvedLocale}.`,
+          "При планировании учитывай таймзону и возвращай даты в ISO-формате.",
         ]
-      : [];
+          .filter(Boolean)
+          .join("\n"),
+      },
+    ];
+
+    if (openTasksForContext.length > 0) {
+      contextMessages.push({
+        role: "system",
+        content: [
+          "Вот актуальные незавершённые задачи пользователя.",
+          "Используй их, чтобы закрывать, обновлять или переносить элементы.",
+          "Формат: #id — название (срок).",
+          openTasksForContext
+            .map((task) => {
+              const due = formatDueDate(task.dueAt, formatOptions);
+              const title = task.title.replace(/\s+/g, " ").trim();
+              return `#${task.id} — ${title}${
+                due !== "—" ? ` (до ${due})` : ""
+              }`;
+            })
+            .join("\n"),
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      });
+    }
 
     return {
       tools: {
         manageTasks: manageTool,
+        listTasks: listTool,
       },
       formatters: {
         manageTasks: formatManageResult,
+        listTasks: formatListTasksResult,
       },
       progressMessages: {
         manageTasks: "Синхронизирую список задач...",
+        listTasks: "Собираю задачи...",
       },
       contextMessages,
     } as const;

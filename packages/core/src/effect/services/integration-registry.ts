@@ -154,7 +154,27 @@ const makeIntegrationRegistry = Effect.gen(function* () {
 
       domainBundles.journal = journalToolsBundle;
 
-      const taskToolsBundle = yield* createTaskTools(numericUserId).pipe(
+      const userSettings = yield* userRepository
+        .getUserSettings(numericUserId)
+        .pipe(
+          Effect.map((settings) => ({
+            timezone: settings.timezone ?? "UTC",
+            locale: settings.locale ?? "ru-RU",
+          })),
+          Effect.catchAll((cause) =>
+            Effect.sync(() => {
+              console.warn(
+                `⚠️ Registry: failed to load user settings for user ${numericUserId}, using defaults`,
+                cause
+              );
+              return { timezone: "UTC", locale: "ru-RU" } as const;
+            })
+          )
+        );
+
+      const taskToolsBundle = yield* createTaskTools(numericUserId, {
+        userSettings,
+      }).pipe(
         Effect.provide(TaskRepositoryLive),
         Effect.mapError(
           (cause) =>
