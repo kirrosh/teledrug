@@ -132,7 +132,7 @@ const parseShift = (shift: string): Date => {
     case "next_week": {
       const d = new Date(base);
       const day = d.getDay();
-      const diff = ((8 - day) % 7) || 7;
+      const diff = (8 - day) % 7 || 7;
       d.setDate(d.getDate() + diff);
       return d;
     }
@@ -177,17 +177,29 @@ const resolveTask = (
       return { kind: "none" } as const;
     }
     if (matches.length === 1) {
-      return { kind: "one", task: matches[0] } as const;
+      const [single] = matches;
+      if (!single) {
+        return { kind: "none" } as const;
+      }
+      return { kind: "one", task: single } as const;
     }
     return { kind: "many", tasks: matches } as const;
   });
 
 interface ManageTasksSummary {
   readonly created: Array<{ id: number; title: string; dueAt?: string | null }>;
-  readonly updated: Array<{ id: number; title: string; changes: ReadonlyArray<string> }>;
+  readonly updated: Array<{
+    id: number;
+    title: string;
+    changes: ReadonlyArray<string>;
+  }>;
   readonly completed: Array<{ id: number; title: string }>;
   readonly deleted: Array<{ id: number; title: string }>;
-  readonly rescheduled: Array<{ id: number; title: string; dueAt?: string | null }>;
+  readonly rescheduled: Array<{
+    id: number;
+    title: string;
+    dueAt?: string | null;
+  }>;
 }
 
 interface ManageTasksResult {
@@ -217,7 +229,9 @@ const applyManageTasks = (
 
     for (const createInput of input.create) {
       try {
-        const dueAtValue = createInput.dueAt ? new Date(createInput.dueAt) : null;
+        const dueAtValue = createInput.dueAt
+          ? new Date(createInput.dueAt)
+          : null;
         if (dueAtValue && Number.isNaN(dueAtValue.getTime())) {
           errors.push(
             `Создание задачи "${createInput.title}": некорректная дата ${createInput.dueAt}`
@@ -268,7 +282,11 @@ const applyManageTasks = (
 
     for (const completeInput of input.complete) {
       const resolved = yield* resolveTask(repo, userId, completeInput);
-      const task = handleTaskResolution(resolved, completeInput, "Завершение задачи");
+      const task = handleTaskResolution(
+        resolved,
+        completeInput,
+        "Завершение задачи"
+      );
       if (!task) continue;
       const ok = yield* repo.complete(task.id, userId);
       if (!ok) {
@@ -280,7 +298,11 @@ const applyManageTasks = (
 
     for (const deleteInput of input.delete) {
       const resolved = yield* resolveTask(repo, userId, deleteInput);
-      const task = handleTaskResolution(resolved, deleteInput, "Удаление задачи");
+      const task = handleTaskResolution(
+        resolved,
+        deleteInput,
+        "Удаление задачи"
+      );
       if (!task) continue;
       const ok = yield* repo.delete(task.id, userId);
       if (!ok) {
@@ -292,7 +314,11 @@ const applyManageTasks = (
 
     for (const updateInput of input.update) {
       const resolved = yield* resolveTask(repo, userId, updateInput);
-      const original = handleTaskResolution(resolved, updateInput, "Обновление задачи");
+      const original = handleTaskResolution(
+        resolved,
+        updateInput,
+        "Обновление задачи"
+      );
       if (!original) continue;
 
       const dueAt =
@@ -317,10 +343,16 @@ const applyManageTasks = (
         });
 
         const changes: string[] = [];
-        if (updateInput.set.title && updateInput.set.title.trim() !== original.title.trim()) {
+        if (
+          updateInput.set.title &&
+          updateInput.set.title.trim() !== original.title.trim()
+        ) {
           changes.push(`название → ${updateInput.set.title.trim()}`);
         }
-        if (updateInput.set.status && updateInput.set.status !== original.status) {
+        if (
+          updateInput.set.status &&
+          updateInput.set.status !== original.status
+        ) {
           const label =
             updateInput.set.status === "done"
               ? "✅ выполнена"
@@ -419,15 +451,22 @@ const formatManageResult: ToolResultFormatter = (output) =>
     const result = output as ManageTasksResult;
     const sections: string[] = [];
 
-    const formatTaskLine = (task: { id: number; title: string }, extra?: string) =>
-      `• #${task.id} — ${escapeMarkdown(task.title)}${extra ? ` (${extra})` : ""}`;
+    const formatTaskLine = (
+      task: { id: number; title: string },
+      extra?: string
+    ) =>
+      `• #${task.id} — ${escapeMarkdown(task.title)}${
+        extra ? ` (${extra})` : ""
+      }`;
 
     if (result.summary.created.length > 0) {
       const lines = result.summary.created
         .map((task) =>
           formatTaskLine(
             task,
-            task.dueAt ? `до ${escapeMarkdown(formatDueDate(task.dueAt))}` : undefined
+            task.dueAt
+              ? `до ${escapeMarkdown(formatDueDate(task.dueAt))}`
+              : undefined
           )
         )
         .join("\n");
@@ -477,13 +516,19 @@ const formatManageResult: ToolResultFormatter = (output) =>
     }
 
     if (result.notes && result.notes.length > 0) {
-      sections.push(
-        result.notes.length === 1
-          ? `📝 Комментарий: ${escapeMarkdown(result.notes[0])}`
-          : `📝 Комментарии:\n${result.notes
-              .map((note) => `• ${escapeMarkdown(note)}`)
-              .join("\n")}`
+      const notes = result.notes.filter(
+        (note): note is string => typeof note === "string" && note.length > 0
       );
+      const [firstNote, ...otherNotes] = notes;
+      if (firstNote) {
+        sections.push(
+          otherNotes.length === 0
+            ? `📝 Комментарий: ${escapeMarkdown(firstNote)}`
+            : `📝 Комментарии:\n${[firstNote, ...otherNotes]
+                .map((note) => `• ${escapeMarkdown(note)}`)
+                .join("\n")}`
+        );
+      }
     }
 
     if (result.errors.length > 0) {
@@ -544,7 +589,9 @@ export const createTaskTools = (userId: number) =>
                 .map((task) => {
                   const due = formatDueDate(task.dueAt);
                   const title = task.title.replace(/\s+/g, " ").trim();
-                  return `#${task.id} — ${title}${due !== "—" ? ` (до ${due})` : ""}`;
+                  return `#${task.id} — ${title}${
+                    due !== "—" ? ` (до ${due})` : ""
+                  }`;
                 })
                 .join("\n"),
             ]

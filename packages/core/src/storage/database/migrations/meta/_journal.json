@@ -43,6 +43,13 @@
       "when": 1758708901760,
       "tag": "0005_normal_mathemanic",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1758875988636,
+      "tag": "0006_backfill_default_user_settings",
+      "breakpoints": true
     }
   ]
 }
