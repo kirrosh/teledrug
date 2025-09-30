@@ -10,29 +10,18 @@ import {
   type CalendarEvent,
   type YandexCredentials,
 } from "../../integrations/yandex-calendar";
-
-const timeFormatter = new Intl.DateTimeFormat("ru-RU", {
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-const startOfToday = () => {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date;
-};
-
-const endOfToday = () => {
-  const date = startOfToday();
-  date.setDate(date.getDate() + 1);
-  date.setMilliseconds(date.getMilliseconds() - 1);
-  return date;
-};
-
-const formatEventLine = (event: CalendarEvent) => {
+import {
+  getDayBoundsInTimezone,
+  formatInTimezone,
+  normalizeTimezone,
+} from "../../shared/timezone";
+const formatEventLine = (
+  event: CalendarEvent,
+  formatter: Intl.DateTimeFormat
+) => {
   const start = new Date(event.startDate);
   const end = new Date(event.endDate);
-  const timeRange = `${timeFormatter.format(start)}–${timeFormatter.format(end)}`;
+  const timeRange = `${formatter.format(start)}–${formatter.format(end)}`;
   const location = event.location ? ` (${event.location})` : "";
   return `• ${timeRange} — ${event.summary}${location}`;
 };
@@ -88,8 +77,9 @@ export const CalendarDigestModule: DigestModuleImpl<UserRepositoryService> = {
         return "📅 Интеграция с календарём не настроена";
       }
 
-      const start = startOfToday();
-      const end = endOfToday();
+      const timeZone = normalizeTimezone(context.userSettings.timezone);
+      const locale = context.userSettings.locale || "ru-RU";
+      const { start, end } = getDayBoundsInTimezone(context.date, timeZone);
 
       let events: CalendarEvent[] = [];
 
@@ -112,7 +102,20 @@ export const CalendarDigestModule: DigestModuleImpl<UserRepositoryService> = {
         return "📅 Сегодня событий нет";
       }
 
-      const lines = events.map(formatEventLine).join("\n");
-      return `📅 События на сегодня:\n${lines}`;
+      const timeFormatter = new Intl.DateTimeFormat(locale, {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone,
+      });
+      const lines = events
+        .map((event) => formatEventLine(event, timeFormatter))
+        .join("\n");
+      const dateLabel = formatInTimezone(
+        context.date,
+        locale,
+        { weekday: "long", day: "numeric", month: "long" },
+        timeZone
+      );
+      return `📅 События на сегодня (${dateLabel}):\n${lines}`;
     }),
 };

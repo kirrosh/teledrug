@@ -5,6 +5,7 @@ import {
   TaskRepository as TaskRepositoryTag,
   type TaskRepository as TaskRepositoryService,
 } from "../../services/task-repository";
+import { getDayBoundsInTimezone, normalizeTimezone } from "../../shared/timezone";
 
 interface TaskSettings {
   readonly limit?: number;
@@ -16,12 +17,14 @@ const parseSettings = (settings: ModuleSettingEntry | undefined): TaskSettings =
   return { limit };
 };
 
-const formatTaskLine = (title: string, dueAt?: Date | null) => {
+const formatTaskLine = (
+  title: string,
+  dueAt: Date | string | null,
+  formatter: Intl.DateTimeFormat
+) => {
   if (!dueAt) return `• ${title}`;
-  const d = new Date(dueAt);
-  const hh = d.getHours().toString().padStart(2, "0");
-  const mm = d.getMinutes().toString().padStart(2, "0");
-  return `• ${hh}:${mm} — ${title}`;
+  const asDate = typeof dueAt === "string" ? new Date(dueAt) : new Date(dueAt);
+  return `• ${formatter.format(asDate)} — ${title}`;
 };
 
 export const TasksDigestModule: DigestModuleImpl<TaskRepositoryService> = {
@@ -32,10 +35,16 @@ export const TasksDigestModule: DigestModuleImpl<TaskRepositoryService> = {
 
       const settings = parseSettings(entry);
       const repo = yield* TaskRepositoryTag;
-      const tasks = yield* repo.listForToday(context.userId, settings.limit).pipe(
-        Effect.catchAll(() => Effect.succeed([]))
-      );
-      const overdue = yield* repo.countOverdue(context.userId).pipe(
+      const timeZone = normalizeTimezone(context.userSettings.timezone);
+      const tasks = yield* repo
+        .listForToday(context.userId, settings.limit, {
+          timezone: timeZone,
+          now: context.date,
+        })
+        .pipe(
+          Effect.catchAll(() => Effect.succeed([]))
+        );
+      const overdue = yield* repo.countOverdue(context.userId, context.date).pipe(
         Effect.catchAll(() => Effect.succeed(0))
       );
 
@@ -43,8 +52,20 @@ export const TasksDigestModule: DigestModuleImpl<TaskRepositoryService> = {
         return "🧭 На сегодня задач нет";
       }
 
-      const lines = tasks.map((t) => formatTaskLine(t.title, t.dueAt as Date | null));
-      const header = "🧭 Задачи на сегодня";
+      const locale = context.userSettings.locale || "ru-RU";
+      const formatter = new Intl.DateTimeFormat(locale, {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone,
+      });
+      const lines = tasks.map((t) => formatTaskLine(t.title, t.dueAt ?? null, formatter));
+      const { start } = getDayBoundsInTimezone(context.date, timeZone);
+      const headerDate = new Intl.DateTimeFormat(locale, {
+        day: "numeric",
+        month: "long",
+        timeZone,
+      }).format(start);
+      const header = `🧭 Задачи на сегодня (${headerDate})`;
       const overdueText = overdue > 0 ? `\n⏰ Просрочено: ${overdue}` : "";
       return `${header}:\n${lines.join("\n")}${overdueText}`;
     }),
