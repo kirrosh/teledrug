@@ -19,6 +19,8 @@
     "paths": {
       "@teledrug/core/*": ["packages/core/src/*"],
       "@teledrug/core": ["packages/core/src/index.ts"],
+      "@teledrug/og/*": ["packages/og/src/*"],
+      "@teledrug/og": ["packages/og/src/index.ts"],
       "@apps/bot/*": ["apps/bot/src/*"],
       "@apps/daily-greeting/*": ["apps/daily-greeting/src/*"]
     }

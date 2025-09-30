@@ -15,6 +15,7 @@ import {
 } from "drizzle-orm";
 import { tasks, type Task, type NewTask } from "../../storage/database/schema";
 import { db } from "../../storage/database/client";
+import { getDayBoundsInTimezone, normalizeTimezone } from "../shared/timezone";
 
 export class TaskRepositoryError extends Data.TaggedError("TaskRepositoryError")<{
   readonly message: string;
@@ -30,7 +31,14 @@ export interface CreateTaskInput {
 export interface TaskRepository {
   readonly create: (input: CreateTaskInput) => Effect.Effect<Task, TaskRepositoryError>;
   readonly complete: (taskId: number, userId: number) => Effect.Effect<boolean, TaskRepositoryError>;
-  readonly listForToday: (userId: number, limit?: number) => Effect.Effect<ReadonlyArray<Task>, TaskRepositoryError>;
+  readonly listForToday: (
+    userId: number,
+    limit?: number,
+    options?: {
+      readonly timezone?: string;
+      readonly now?: Date;
+    }
+  ) => Effect.Effect<ReadonlyArray<Task>, TaskRepositoryError>;
   readonly countOverdue: (userId: number, now?: Date) => Effect.Effect<number, TaskRepositoryError>;
   readonly listOpen: (userId: number, limit?: number) => Effect.Effect<ReadonlyArray<Task>, TaskRepositoryError>;
   readonly listByFilters: (
@@ -58,20 +66,6 @@ export interface TaskRepository {
 }
 
 export const TaskRepository = Context.GenericTag<TaskRepository>("@services/TaskRepository");
-
-// no-op
-
-const startOfDay = (date: Date) => {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
-
-const endOfDay = (date: Date) => {
-  const d = new Date(date);
-  d.setHours(23, 59, 59, 999);
-  return d;
-};
 
 interface ResolveInput {
   readonly id?: number;
@@ -112,11 +106,16 @@ const makeTaskRepository = Effect.sync(() => {
       catch: (cause) => new TaskRepositoryError({ message: "Не удалось завершить задачу", cause }),
     });
 
-  const listForToday: TaskRepository["listForToday"] = (userId, limit = 3) =>
+  const listForToday: TaskRepository["listForToday"] = (
+    userId,
+    limit = 3,
+    options = {}
+  ) =>
     Effect.tryPromise({
       try: async () => {
-        const start = startOfDay(new Date());
-        const end = endOfDay(new Date());
+        const timeZone = normalizeTimezone(options.timezone ?? "UTC");
+        const now = options.now ?? new Date();
+        const { start, end } = getDayBoundsInTimezone(now, timeZone);
         const rows = await db
           .select()
           .from(tasks)
@@ -132,7 +131,6 @@ const makeTaskRepository = Effect.sync(() => {
           )
           .limit(50);
 
-        // Sort: earliest due first
         const sorted = rows.sort((a, b) => {
           const ad = a.dueAt ? new Date(a.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
           const bd = b.dueAt ? new Date(b.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
@@ -140,7 +138,11 @@ const makeTaskRepository = Effect.sync(() => {
         });
         return sorted.slice(0, limit);
       },
-      catch: (cause) => new TaskRepositoryError({ message: "Не удалось получить задачи на сегодня", cause }),
+      catch: (cause) =>
+        new TaskRepositoryError({
+          message: "Не удалось получить задачи на сегодня",
+          cause,
+        }),
     });
 
   const countOverdue: TaskRepository["countOverdue"] = (userId, now = new Date()) =>

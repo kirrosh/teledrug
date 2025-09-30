@@ -1,0 +1,20 @@
+{
+  "name": "@teledrug/og",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  },
+  "scripts": {
+    "build": "bun build src/index.ts --outdir dist --target bun"
+  },
+  "dependencies": {
+    "@vercel/og": "^0.6.2",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "typescript": "5.9.2"
+  }
+}

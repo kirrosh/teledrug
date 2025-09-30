@@ -17,6 +17,7 @@ import { createJournalTools } from "../journal/tools";
 import { JournalAnalysisService } from "./journal-analysis";
 import { JournalRepository } from "./journal-repository";
 import { createTaskTools } from "../tasks/tools";
+import { createUserSettingsTools } from "../user/tools";
 import { TaskRepository, TaskRepositoryLive } from "./task-repository";
 
 export interface IntegrationToolsBundle {
@@ -26,7 +27,12 @@ export interface IntegrationToolsBundle {
   readonly contextMessages?: ReadonlyArray<CoreMessage>;
 }
 
-export type DomainAgentType = "digest" | "journal" | "tasks" | "calendar";
+export type DomainAgentType =
+  | "digest"
+  | "journal"
+  | "tasks"
+  | "calendar"
+  | "settings";
 
 export type DomainIntegrationTools = Partial<
   Record<DomainAgentType, IntegrationToolsBundle>
@@ -186,6 +192,30 @@ const makeIntegrationRegistry = Effect.gen(function* () {
       );
 
       domainBundles.tasks = taskToolsBundle;
+
+      const settingsToolsBundle = yield* createUserSettingsTools(
+        numericUserId,
+        {
+          snapshot: {
+            timezone: userSettings.timezone,
+            locale: userSettings.locale,
+            city: userSettings.city ?? null,
+            country: userSettings.country ?? null,
+          },
+        }
+      ).pipe(
+        Effect.provideService(DigestSettingsRepository, digestSettings),
+        Effect.provideService(UserRepository, userRepository),
+        Effect.mapError(
+          (cause) =>
+            new IntegrationError({
+              message: "Failed to prepare user settings tools",
+              cause,
+            })
+        )
+      );
+
+      domainBundles.settings = settingsToolsBundle;
 
       const integrations = yield* userRepository
         .getAllDecryptedIntegrations(numericUserId)

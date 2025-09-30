@@ -85,6 +85,7 @@ const DEFAULT_AGENT_FALLBACK_ORDER: readonly DomainAgentType[] = [
   "tasks",
   "calendar",
   "digest",
+  "settings",
 ];
 
 const domainAgentDefinitions: Record<DomainAgentType, DomainAgentDefinition> = {
@@ -132,6 +133,17 @@ const domainAgentDefinitions: Record<DomainAgentType, DomainAgentDefinition> = {
     buildSystemPrompt: (context, _toolNames) => {
       const interactionHint = buildInteractionHint(context);
       return `Ты — агент дайджеста TeleDrug. Управляй настройками утреннего дайджеста, включай и отключай модули, обновляй параметры погоды и валют. Отвечай на русском, будь очень краток и конкретен. Не задавай уточняющих вопросов, даже если данных мало — сделай разумное предположение и поясни его. ${interactionHint}`.trim();
+    },
+  },
+  settings: {
+    description:
+      "Меняет личные настройки: город, страна, часовой пояс и предпочтения.",
+    buildSystemPrompt: (context, toolNames) => {
+      const interactionHint = buildInteractionHint(context);
+      const toolHint = toolNames.length
+        ? "Собери все изменения в одном вызове инструмента, избегай повторных обращений без необходимости."
+        : "Собери все необходимые правки единым действием.";
+      return `Ты — агент настроек TeleDrug. Меняешь город, страну, часовой пояс и пользовательские предпочтения. После смены города обновляй погодный модуль, чтобы он показывал новую локацию. Если просят сменить язык, объясни, что это пока недоступно, но продолжай выполнять остальные просьбы. Отвечай лаконично, подтверждай применённые изменения. ${toolHint} ${interactionHint}`.trim();
     },
   },
 };
@@ -439,6 +451,7 @@ const routeAgents = (
                 "\n- Если пользователь перечисляет задачи, планы или поручения — обязательно добавь агента tasks." +
                 "\n- Если вместе с задачами пользователь делится эмоциями, переживаниями или делает заметку для дневника — выбери и tasks, и journal." +
                 "\n- Агента journal используй только для записей о состоянии, эмоциях и размышлениях без явных задач." +
+                "\n- Если речь про смену города, страны, часового пояса или личных предпочтений — выбирай агента settings." +
                 "\nДоступные агенты и их обязанности:\n" +
                 systemPromptLines.join("\n"),
             },

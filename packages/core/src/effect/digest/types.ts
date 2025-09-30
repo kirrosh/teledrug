@@ -3,9 +3,17 @@ import type { ModuleSettingEntry } from "../services/digest-settings";
 
 export type DigestModuleId = "weather" | "fx" | "calendar" | "tasks";
 
+export interface DigestUserSettingsSnapshot {
+  readonly timezone: string;
+  readonly locale: string;
+  readonly city: string | null;
+  readonly country: string | null;
+}
+
 export interface DigestModuleContext {
   readonly userId: number;
   readonly date: Date;
+  readonly userSettings: DigestUserSettingsSnapshot;
 }
 
 export interface DigestModuleResult {
