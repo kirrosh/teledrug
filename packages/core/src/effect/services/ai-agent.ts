@@ -58,6 +58,9 @@ export interface AIAgentResponse {
   readonly executions: ReadonlyArray<AgentExecution>;
   readonly toolFormatters: Record<string, ToolResultFormatter>;
   readonly toolProgressMessages: Record<string, string>;
+  readonly plan: ReadonlyArray<AgentPlanEntry>;
+  readonly usedFallbackRouting: boolean;
+  readonly subagentExecutionEnabled: boolean;
 }
 
 // Service tag
@@ -87,6 +90,25 @@ const DEFAULT_AGENT_FALLBACK_ORDER: readonly DomainAgentType[] = [
   "digest",
   "settings",
 ];
+
+const SUBAGENT_EXECUTION_ENABLED =
+  process.env.TELEDRUG_ENABLE_SUBAGENTS === "true";
+
+interface AgentPlanEntry {
+  readonly kind: DomainAgentType | "fallback";
+  readonly executed: boolean;
+  readonly reason?: string;
+}
+
+interface AgentRoutingDecision {
+  readonly agents: ReadonlyArray<DomainAgentType>;
+  readonly reasoning?: string;
+}
+
+interface AgentRoutingOutcome extends AgentRoutingDecision {
+  readonly usedFallback: boolean;
+  readonly error?: unknown;
+}
 
 const domainAgentDefinitions: Record<DomainAgentType, DomainAgentDefinition> = {
   journal: {
@@ -224,40 +246,66 @@ const makeAIAgent = (config: AIAgentConfig) =>
 
         const model = openai(validatedConfig.model || "gpt-5-nano");
 
-        const routedAgents = yield* routeAgents(
+        const routingOutcome = yield* routeAgents(
           model,
           validatedConfig,
           availableAgents,
           validatedContext,
           conversationHistory
         ).pipe(
+          Effect.map(
+            (decision): AgentRoutingOutcome => ({
+              ...decision,
+              usedFallback: false,
+            })
+          ),
           Effect.catchAll((error) =>
             Effect.gen(function* () {
+              const fallbackOrder = DEFAULT_AGENT_FALLBACK_ORDER.slice();
               yield* Effect.sync(() =>
                 console.warn(
                   "⚠️ Agent routing failed, using fallback order",
                   error
                 )
               );
-              return DEFAULT_AGENT_FALLBACK_ORDER.slice();
+              return {
+                agents: fallbackOrder,
+                reasoning: undefined,
+                usedFallback: true,
+                error,
+              } satisfies AgentRoutingOutcome;
             })
           )
         );
 
-        const executionOrder = routedAgents.length
-          ? routedAgents
-          : DEFAULT_AGENT_FALLBACK_ORDER.slice();
+        if (
+          routingOutcome.reasoning &&
+          routingOutcome.reasoning.trim().length > 0
+        ) {
+          console.log("🧠 Router reasoning:", routingOutcome.reasoning.trim());
+        }
 
-        if (executionOrder.length > 0) {
+        if (routingOutcome.usedFallback) {
           console.log(
-            `🛣️ Agent execution order: ${executionOrder.join(" → ")}`
-          );
-        } else {
-          console.log(
-            "🛣️ Agent execution order: <empty> — falling back to defaults"
+            `⚠️ Router fallback engaged; default order: ${routingOutcome.agents.join(
+              " → "
+            )}`
           );
         }
 
+        const executionOrder = routingOutcome.agents;
+
+        if (executionOrder.length > 0) {
+          console.log(
+            `🛣️ Planned domain agents: ${executionOrder.join(" → ")}`
+          );
+        } else {
+          console.log(
+            "🛣️ No domain agents selected by router; skipping tool execution"
+          );
+        }
+
+        const agentPlan: AgentPlanEntry[] = [];
         const successfulExecutions: AgentExecution[] = [];
 
         for (const agentKind of executionOrder) {
@@ -265,6 +313,23 @@ const makeAIAgent = (config: AIAgentConfig) =>
           const toolsBundle = domainTools[agentKind];
 
           if (!definition || !toolsBundle) {
+            agentPlan.push({
+              kind: agentKind,
+              executed: false,
+              reason: "tool bundle not available",
+            });
+            continue;
+          }
+
+          if (!SUBAGENT_EXECUTION_ENABLED) {
+            console.log(
+              `⏸️ Subagent ${agentKind} skipped: execution disabled (TELEDRUG_ENABLE_SUBAGENTS !== "true")`
+            );
+            agentPlan.push({
+              kind: agentKind,
+              executed: false,
+              reason: "subagent execution disabled",
+            });
             continue;
           }
 
@@ -286,6 +351,14 @@ const makeAIAgent = (config: AIAgentConfig) =>
                 attempt.left
               )
             );
+            agentPlan.push({
+              kind: agentKind,
+              executed: false,
+              reason:
+                attempt.left instanceof Error
+                  ? attempt.left.message
+                  : String(attempt.left),
+            });
             continue;
           }
 
@@ -300,13 +373,53 @@ const makeAIAgent = (config: AIAgentConfig) =>
             yield* Effect.sync(() =>
               console.log(`✅ Agent ${agentKind} produced a response`)
             );
+            agentPlan.push({ kind: agentKind, executed: true });
           } else {
             yield* Effect.sync(() =>
               console.log(
                 `ℹ️ Agent ${agentKind} did not provide actionable output, moving to next`
               )
             );
+            agentPlan.push({
+              kind: agentKind,
+              executed: false,
+              reason: "no actionable output",
+            });
           }
+        }
+
+        if (
+          !SUBAGENT_EXECUTION_ENABLED &&
+          executionOrder.length > 0 &&
+          successfulExecutions.length === 0
+        ) {
+          const summaryLines = agentPlan.map((entry, index) => {
+            const description =
+              entry.kind === "fallback"
+                ? "Резервный ассистент"
+                : domainAgentDefinitions[entry.kind]?.description ?? entry.kind;
+            const status = entry.executed
+              ? "выполнен"
+              : `пропущен${entry.reason ? `: ${entry.reason}` : ""}`;
+            return `${index + 1}. ${entry.kind} — ${description} (${status})`;
+          });
+          const summaryText = [
+            "🔍 Режим тестирования: субагенты не запускались.",
+            "Установите переменную окружения TELEDRUG_ENABLE_SUBAGENTS=true перед запуском, чтобы активировать инструменты.",
+            "План вызовов:",
+            ...summaryLines,
+          ].join("\n");
+
+          successfulExecutions.push({
+            kind: "fallback",
+            result: {
+              text: summaryText,
+              toolCalls: [],
+              toolResults: [],
+            } as any,
+            toolFormatters: {},
+            toolProgressMessages: {},
+          });
         }
 
         if (successfulExecutions.length === 0) {
@@ -317,6 +430,11 @@ const makeAIAgent = (config: AIAgentConfig) =>
             baseMessages
           );
           successfulExecutions.push(fallbackExecution);
+          agentPlan.push({
+            kind: "fallback",
+            executed: true,
+            reason: "no domain agent produced output",
+          });
         }
 
         const combinedFormatters = successfulExecutions.reduce<
@@ -337,6 +455,9 @@ const makeAIAgent = (config: AIAgentConfig) =>
           executions: successfulExecutions,
           toolFormatters: combinedFormatters,
           toolProgressMessages: combinedProgressMessages,
+          plan: agentPlan,
+          usedFallbackRouting: routingOutcome.usedFallback,
+          subagentExecutionEnabled: SUBAGENT_EXECUTION_ENABLED,
         } satisfies AIAgentResponse;
       });
 
@@ -410,9 +531,9 @@ const routeAgents = (
   }>,
   context: SimpleChatContext,
   conversationHistory: readonly string[]
-): Effect.Effect<ReadonlyArray<DomainAgentType>, AIAgentError> => {
+): Effect.Effect<AgentRoutingDecision, AIAgentError> => {
   if (availableAgents.length === 0) {
-    return Effect.succeed([]);
+    return Effect.succeed({ agents: [] });
   }
 
   const agentNames = availableAgents.map((agent) => agent.kind);
@@ -469,14 +590,16 @@ const routeAgents = (
 
         const selectedAgents = (object.agents || []).filter((agent) =>
           agentNames.includes(agent)
-        );
-        if (selectedAgents.length > 0) {
-          return selectedAgents as ReadonlyArray<DomainAgentType>;
-        }
+        ) as ReadonlyArray<DomainAgentType>;
+        const reasoning =
+          typeof object.reasoning === "string"
+            ? object.reasoning.trim()
+            : undefined;
 
-        throw new AIAgentError({
-          message: "Router did not select any agents",
-        });
+        return {
+          agents: selectedAgents,
+          reasoning,
+        } satisfies AgentRoutingDecision;
       } catch (cause) {
         if (NoObjectGeneratedError.isInstance?.(cause)) {
           throw new AIAgentError({
