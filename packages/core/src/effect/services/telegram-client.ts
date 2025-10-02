@@ -432,6 +432,11 @@ const makeTelegramClient = (config: BotConfig) =>
           const aiAgent = yield* aiAgentFactory.getOrCreateAgent(userId);
 
           const history = yield* messageHistory.getHistory(chatId);
+          yield* Effect.sync(() =>
+            console.log(
+              `🗂️ Loaded conversation history (${history.length} messages)`
+            )
+          );
 
           yield* messageHistory.addUserMessage(chatId, text);
 
@@ -447,7 +452,26 @@ const makeTelegramClient = (config: BotConfig) =>
             history
           );
 
-          const { executions, toolFormatters } = agentResponse;
+          const { executions, toolFormatters, plan, subagentExecutionEnabled } =
+            agentResponse;
+
+          if (plan.length > 0) {
+            console.log("🗺️ Subagent plan:");
+            for (const entry of plan) {
+              const status = entry.executed
+                ? "✅ выполнен"
+                : `⏸️ пропущен${entry.reason ? ` (${entry.reason})` : ""}`;
+              console.log(`  • ${entry.kind}: ${status}`);
+            }
+          } else {
+            console.log("🗺️ Subagent plan: <empty>");
+          }
+
+          if (!subagentExecutionEnabled) {
+            console.log(
+              "🧪 Subagent execution disabled — returning diagnostic summary"
+            );
+          }
 
           const allToolCalls = executions.flatMap(
             (execution) => execution.result.toolCalls ?? []
