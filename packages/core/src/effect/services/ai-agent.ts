@@ -60,13 +60,12 @@ export interface AIAgentResponse {
   readonly toolProgressMessages: Record<string, string>;
   readonly plan: ReadonlyArray<AgentPlanEntry>;
   readonly usedFallbackRouting: boolean;
-  readonly subagentExecutionEnabled: boolean;
 }
 
 // Service tag
 export const AIAgent = Context.GenericTag<AIAgent>("@services/AIAgent");
 
-type AgentExecutionKind = DomainAgentType | "fallback";
+type AgentExecutionKind = DomainAgentType;
 
 interface AgentExecution {
   readonly kind: AgentExecutionKind;
@@ -91,11 +90,8 @@ const DEFAULT_AGENT_FALLBACK_ORDER: readonly DomainAgentType[] = [
   "settings",
 ];
 
-const SUBAGENT_EXECUTION_ENABLED =
-  process.env.TELEDRUG_ENABLE_SUBAGENTS === "true";
-
 interface AgentPlanEntry {
-  readonly kind: DomainAgentType | "fallback";
+  readonly kind: DomainAgentType;
   readonly executed: boolean;
   readonly reason?: string;
 }
@@ -293,15 +289,20 @@ const makeAIAgent = (config: AIAgentConfig) =>
           );
         }
 
-        const executionOrder = routingOutcome.agents;
+        const executionOrder =
+          routingOutcome.agents.length > 0
+            ? routingOutcome.agents
+            : DEFAULT_AGENT_FALLBACK_ORDER;
 
-        if (executionOrder.length > 0) {
+        if (routingOutcome.agents.length > 0) {
           console.log(
             `🛣️ Planned domain agents: ${executionOrder.join(" → ")}`
           );
         } else {
           console.log(
-            "🛣️ No domain agents selected by router; skipping tool execution"
+            `🛣️ Router returned no agents; using default order: ${executionOrder.join(
+              " → "
+            )}`
           );
         }
 
@@ -317,18 +318,6 @@ const makeAIAgent = (config: AIAgentConfig) =>
               kind: agentKind,
               executed: false,
               reason: "tool bundle not available",
-            });
-            continue;
-          }
-
-          if (!SUBAGENT_EXECUTION_ENABLED) {
-            console.log(
-              `⏸️ Subagent ${agentKind} skipped: execution disabled (TELEDRUG_ENABLE_SUBAGENTS !== "true")`
-            );
-            agentPlan.push({
-              kind: agentKind,
-              executed: false,
-              reason: "subagent execution disabled",
             });
             continue;
           }
@@ -363,78 +352,35 @@ const makeAIAgent = (config: AIAgentConfig) =>
           }
 
           const execution = attempt.right;
-          const resultText = execution.result.text?.trim();
           const hasToolResults =
             execution.result.toolResults &&
             execution.result.toolResults.length > 0;
 
-          if ((resultText && resultText.length > 0) || hasToolResults) {
+          if (hasToolResults) {
             successfulExecutions.push(execution);
             yield* Effect.sync(() =>
-              console.log(`✅ Agent ${agentKind} produced a response`)
+              console.log(`✅ Agent ${agentKind} produced tool results`)
             );
             agentPlan.push({ kind: agentKind, executed: true });
           } else {
             yield* Effect.sync(() =>
               console.log(
-                `ℹ️ Agent ${agentKind} did not provide actionable output, moving to next`
+                `ℹ️ Agent ${agentKind} did not return tool results, moving to next`
               )
             );
             agentPlan.push({
               kind: agentKind,
               executed: false,
-              reason: "no actionable output",
+              reason: "no tool results",
             });
           }
         }
-
-        if (
-          !SUBAGENT_EXECUTION_ENABLED &&
-          executionOrder.length > 0 &&
-          successfulExecutions.length === 0
-        ) {
-          const summaryLines = agentPlan.map((entry, index) => {
-            const description =
-              entry.kind === "fallback"
-                ? "Резервный ассистент"
-                : domainAgentDefinitions[entry.kind]?.description ?? entry.kind;
-            const status = entry.executed
-              ? "выполнен"
-              : `пропущен${entry.reason ? `: ${entry.reason}` : ""}`;
-            return `${index + 1}. ${entry.kind} — ${description} (${status})`;
-          });
-          const summaryText = [
-            "🔍 Режим тестирования: субагенты не запускались.",
-            "Установите переменную окружения TELEDRUG_ENABLE_SUBAGENTS=true перед запуском, чтобы активировать инструменты.",
-            "План вызовов:",
-            ...summaryLines,
-          ].join("\n");
-
-          successfulExecutions.push({
-            kind: "fallback",
-            result: {
-              text: summaryText,
-              toolCalls: [],
-              toolResults: [],
-            } as any,
-            toolFormatters: {},
-            toolProgressMessages: {},
-          });
-        }
-
         if (successfulExecutions.length === 0) {
-          const fallbackExecution = yield* runFallbackAgent(
-            model,
-            validatedConfig,
-            validatedContext,
-            baseMessages
+          yield* Effect.fail(
+            new AIAgentError({
+              message: "No subagent produced tool results",
+            })
           );
-          successfulExecutions.push(fallbackExecution);
-          agentPlan.push({
-            kind: "fallback",
-            executed: true,
-            reason: "no domain agent produced output",
-          });
         }
 
         const combinedFormatters = successfulExecutions.reduce<
@@ -457,7 +403,6 @@ const makeAIAgent = (config: AIAgentConfig) =>
           toolProgressMessages: combinedProgressMessages,
           plan: agentPlan,
           usedFallbackRouting: routingOutcome.usedFallback,
-          subagentExecutionEnabled: SUBAGENT_EXECUTION_ENABLED,
         } satisfies AIAgentResponse;
       });
 
@@ -686,40 +631,6 @@ const runDomainAgent = (
       result,
       toolFormatters: bundle.formatters,
       toolProgressMessages: bundle.progressMessages,
-    } satisfies AgentExecution;
-  });
-
-const runFallbackAgent = (
-  model: ReturnType<typeof openai>,
-  config: AIAgentConfig,
-  context: SimpleChatContext,
-  baseMessages: ReadonlyArray<CoreMessage>
-): Effect.Effect<AgentExecution, AIAgentError> =>
-  Effect.gen(function* () {
-    const agent = new Agent({
-      model,
-      maxOutputTokens: config.maxTokens,
-    });
-
-    const result = yield* Effect.tryPromise({
-      try: () =>
-        agent.generate({
-          system:
-            "Ты — ассистент TeleDrug. У пользователя недоступны специализированные инструменты, поэтому ответь кратко и дружелюбно, по-русски, предложи общее решение или попроси уточнить запрос.",
-          messages: [...baseMessages],
-        }),
-      catch: (cause) =>
-        new AIAgentError({
-          message: "Fallback assistant failed",
-          cause,
-        }),
-    });
-
-    return {
-      kind: "fallback",
-      result,
-      toolFormatters: {},
-      toolProgressMessages: {},
     } satisfies AgentExecution;
   });
 

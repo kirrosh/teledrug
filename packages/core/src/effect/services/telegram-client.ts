@@ -452,7 +452,7 @@ const makeTelegramClient = (config: BotConfig) =>
             history
           );
 
-          const { executions, toolFormatters, plan, subagentExecutionEnabled } =
+          const { executions, toolFormatters, plan } =
             agentResponse;
 
           if (plan.length > 0) {
@@ -467,12 +467,6 @@ const makeTelegramClient = (config: BotConfig) =>
             console.log("🗺️ Subagent plan: <empty>");
           }
 
-          if (!subagentExecutionEnabled) {
-            console.log(
-              "🧪 Subagent execution disabled — returning diagnostic summary"
-            );
-          }
-
           const allToolCalls = executions.flatMap(
             (execution) => execution.result.toolCalls ?? []
           );
@@ -484,50 +478,26 @@ const makeTelegramClient = (config: BotConfig) =>
             }
           }
 
-          const baseText = executions
-            .map((execution) => execution.result.text?.trim())
-            .filter((value): value is string =>
-              Boolean(value && value.length > 0)
-            )
-            .join("\n\n");
-          let aggregatedResponse: AggregatedToolResponse | undefined;
-
           const allToolResults = executions.flatMap(
             (execution) => execution.result.toolResults ?? []
           );
 
-          if (allToolResults.length > 0) {
-            console.log("🔧 Processing tool results to generate response...");
-            aggregatedResponse = yield* generateResponseFromToolResults(
-              allToolResults,
-              toolFormatters
+          if (allToolResults.length === 0) {
+            yield* Effect.fail(
+              new Error("No tool results returned by subagents")
             );
           }
 
-          const textParts: string[] = [];
-          const aggregatedText = aggregatedResponse?.text?.trim();
-          if (aggregatedText && aggregatedText.length > 0) {
-            textParts.push(aggregatedText);
-          }
-          const baseTextValue = baseText.trim();
-          if (baseTextValue.length > 0) {
-            textParts.push(baseTextValue);
-          }
+          console.log("🔧 Processing tool results to generate response...");
 
-          const finalText =
-            textParts.join("\n\n").trim() ||
-            "❌ Извините, не удалось сформировать ответ.";
+          const finalResponse = yield* generateResponseFromToolResults(
+            allToolResults,
+            toolFormatters
+          );
 
-          const finalResponse: AggregatedToolResponse = {
-            text: finalText,
-            parseMode: aggregatedResponse?.parseMode,
-            replyMarkup: aggregatedResponse?.replyMarkup,
-            metadata: aggregatedResponse?.metadata,
-          };
+          console.log("📝 Final response text:", finalResponse.text);
 
-          console.log("📝 Final response text:", finalText);
-
-          yield* messageHistory.addAssistantMessage(chatId, finalText);
+          yield* messageHistory.addAssistantMessage(chatId, finalResponse.text);
 
           yield* finalizeMessage(finalResponse);
         }).pipe(
