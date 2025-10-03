@@ -1,4 +1,4 @@
-import { UserRepository } from './database/repositories/user-repository';
+import { UserRepository } from "./database/repositories/user-repository";
 
 export interface UserIntegrationConfig {
   name: string;
@@ -36,7 +36,8 @@ export class UserConfigStorage {
     }
 
     // Load from database
-    const numericUserId = typeof userId === 'string' ? parseInt(userId) : userId;
+    const numericUserId =
+      typeof userId === "string" ? parseInt(userId) : userId;
     const user = await this.userRepository.getUser(numericUserId);
 
     if (!user) {
@@ -44,9 +45,14 @@ export class UserConfigStorage {
     }
 
     const settings = await this.userRepository.getUserSettings(numericUserId);
-    const preferences = settings.preferences as Record<string, any> | null | undefined;
+    const preferences = settings.preferences as
+      | Record<string, any>
+      | null
+      | undefined;
 
-    const integrations = await this.userRepository.getAllDecryptedIntegrations(numericUserId);
+    const integrations = await this.userRepository.getAllDecryptedIntegrations(
+      numericUserId
+    );
 
     const config: UserConfig = {
       userId: user.telegramId,
@@ -64,7 +70,7 @@ export class UserConfigStorage {
         settings: integration.settings as Record<string, any> | undefined,
       })),
       aiSettings: {
-        model: 'gpt-5-nano',
+        model: "gpt-4o-mini",
       },
       preferences: preferences ?? undefined,
     };
@@ -75,7 +81,10 @@ export class UserConfigStorage {
   }
 
   async save(config: UserConfig): Promise<void> {
-    const numericUserId = typeof config.userId === 'string' ? parseInt(config.userId) : config.userId;
+    const numericUserId =
+      typeof config.userId === "string"
+        ? parseInt(config.userId)
+        : config.userId;
 
     // Ensure user exists
     await this.userRepository.getOrCreateUser(numericUserId, config.username);
@@ -88,19 +97,19 @@ export class UserConfigStorage {
       preferences?: Record<string, any> | null;
     } = {};
 
-    if (config.settings && 'timezone' in config.settings) {
+    if (config.settings && "timezone" in config.settings) {
       settingsPatch.timezone = config.settings.timezone;
     }
 
-    if (config.settings && 'locale' in config.settings) {
+    if (config.settings && "locale" in config.settings) {
       settingsPatch.locale = config.settings.locale;
     }
 
-    if (config.settings && 'city' in config.settings) {
+    if (config.settings && "city" in config.settings) {
       settingsPatch.city = config.settings.city ?? null;
     }
 
-    if (config.settings && 'country' in config.settings) {
+    if (config.settings && "country" in config.settings) {
       settingsPatch.country = config.settings.country ?? null;
     }
 
@@ -109,7 +118,10 @@ export class UserConfigStorage {
     }
 
     if (Object.keys(settingsPatch).length > 0) {
-      await this.userRepository.updateUserSettings(numericUserId, settingsPatch);
+      await this.userRepository.updateUserSettings(
+        numericUserId,
+        settingsPatch
+      );
     }
 
     // Save each integration
@@ -143,7 +155,8 @@ export class UserConfigStorage {
     userId: string | number,
     integration: UserIntegrationConfig
   ): Promise<void> {
-    const numericUserId = typeof userId === 'string' ? parseInt(userId) : userId;
+    const numericUserId =
+      typeof userId === "string" ? parseInt(userId) : userId;
 
     await this.userRepository.addIntegration(
       numericUserId,
@@ -160,7 +173,8 @@ export class UserConfigStorage {
     userId: string | number,
     integrationName: string
   ): Promise<void> {
-    const numericUserId = typeof userId === 'string' ? parseInt(userId) : userId;
+    const numericUserId =
+      typeof userId === "string" ? parseInt(userId) : userId;
 
     await this.userRepository.removeIntegration(numericUserId, integrationName);
 
@@ -172,7 +186,8 @@ export class UserConfigStorage {
     userId: string | number,
     username?: string
   ): Promise<UserConfig> {
-    const numericUserId = typeof userId === 'string' ? parseInt(userId) : userId;
+    const numericUserId =
+      typeof userId === "string" ? parseInt(userId) : userId;
 
     // Create user in database
     await this.userRepository.getOrCreateUser(numericUserId, username);

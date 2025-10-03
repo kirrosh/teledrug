@@ -20,7 +20,7 @@ import { IntegrationError, ToolResultFormatter } from "../types/integrations";
 // AI Agent Configuration Schema
 const AIAgentConfigSchema = Schema.Struct({
   openaiApiKey: Schema.String,
-  model: Schema.optionalWith(Schema.String, { default: () => "gpt-5-nano" }),
+  model: Schema.optionalWith(Schema.String, { default: () => "gpt-4o-mini" }),
   maxTokens: Schema.optionalWith(Schema.Number, { default: () => 1000 }),
   userId: Schema.Union(Schema.String, Schema.Number),
 });
@@ -240,7 +240,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
           }
         }
 
-        const model = openai(validatedConfig.model || "gpt-5-nano");
+        const model = openai(validatedConfig.model || "gpt-4o-mini");
 
         const routingOutcome = yield* routeAgents(
           model,
@@ -517,7 +517,10 @@ const routeAgents = (
                 "\n- Если пользователь перечисляет задачи, планы или поручения — обязательно добавь агента tasks." +
                 "\n- Если вместе с задачами пользователь делится эмоциями, переживаниями или делает заметку для дневника — выбери и tasks, и journal." +
                 "\n- Агента journal используй только для записей о состоянии, эмоциях и размышлениях без явных задач." +
-                "\n- Если речь про смену города, страны, часового пояса или личных предпочтений — выбирай агента settings." +
+                "\n- Если пользователь описывает событие с конкретной датой, временем или диапазоном — обязательно добавь агента calendar." +
+                "\n- Если при описании события пользователь также делится эмоциями, переживаниями или личными ожиданиями — выбери и calendar, и journal." +
+                "\n- Не выбирай агента tasks, если пользователь не просит явно управлять задачами или поручениями." +
+                "\n- Агента settings выбирай ТОЛЬКО когда пользователь явно просит изменить личные настройки (город, страну, часовой пояс, предпочтения). Простое упоминание города, поездки или места события не означает изменение настроек." +
                 "\nДоступные агенты и их обязанности:\n" +
                 systemPromptLines.join("\n"),
             },
@@ -577,9 +580,15 @@ const runDomainAgent = (
     const contextMessages = bundle.contextMessages ?? [];
     const agentMessages = [...contextMessages, ...baseMessages];
     const agent = new Agent({
-      model: openai(config.model || "gpt-5-nano"),
+      model: openai(config.model || "gpt-4o-mini"),
       ...(toolNames.length > 0
-        ? { tools: bundle.tools, toolChoice: "required" }
+        ? {
+            tools: bundle.tools,
+            toolChoice:
+              toolNames.length === 1
+                ? { type: "tool", toolName: toolNames[0] }
+                : "required",
+          }
         : {}),
       maxOutputTokens: config.maxTokens,
     });
@@ -658,6 +667,17 @@ const buildMessages = (
 
   return messages;
 };
+
+/**
+ * Internal helpers exported for integration tests. Not part of the public API.
+ */
+export const __testInternals = {
+  runDomainAgent,
+  domainAgentDefinitions,
+  buildMessages,
+  DEFAULT_AGENT_FALLBACK_ORDER,
+  routeAgents,
+} as const;
 
 export interface AIAgentFactory {
   readonly getOrCreateAgent: (

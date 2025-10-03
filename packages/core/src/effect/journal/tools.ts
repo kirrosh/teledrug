@@ -147,7 +147,7 @@ export const createJournalTools = (userId: number) =>
     const repository = yield* JournalRepository;
     const tasksRepo = yield* TaskRepository;
 
-    const model = openai("gpt-5-nano");
+    const model = openai("gpt-4o-mini");
 
     const extractTasksAI = (
       content: string,

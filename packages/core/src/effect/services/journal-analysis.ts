@@ -49,7 +49,7 @@ export const JournalAnalysisService =
   );
 
 const makeJournalAnalysisService = Effect.gen(function* () {
-  const model = openai("gpt-5-nano");
+  const model = openai("gpt-4o-mini");
 
   const analyze: JournalAnalysisService["analyze"] = ({ content }) =>
     Effect.gen(function* () {

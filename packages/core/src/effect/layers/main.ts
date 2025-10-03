@@ -55,7 +55,7 @@ export const createMainLayer = (
   const aiAgent = pipe(
     AIAgentFactoryLive({
       openaiApiKey: config.openaiApiKey,
-      model: "gpt-5-nano",
+      model: "gpt-4o-mini",
       maxTokens: 3000,
       userId: "default",
     }),
