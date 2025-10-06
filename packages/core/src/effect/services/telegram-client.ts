@@ -315,6 +315,20 @@ const makeTelegramClient = (config: BotConfig) =>
       );
 
       let progressMessageId = options.progressMessageId;
+      let lastProgressText: string | undefined;
+      let lastProgressOptionsKey: string | undefined;
+
+      const serializeOptions = (
+        editOptions?: Parameters<typeof ctx.api.editMessageText>[3]
+      ) => (editOptions ? JSON.stringify(editOptions) : undefined);
+
+      const updateLastProgress = (
+        text: string,
+        editOptions?: Parameters<typeof ctx.api.editMessageText>[3]
+      ) => {
+        lastProgressText = text;
+        lastProgressOptionsKey = serializeOptions(editOptions);
+      };
 
       const ensureProgressMessage = async () => {
         if (progressMessageId !== undefined) {
@@ -324,12 +338,14 @@ const makeTelegramClient = (config: BotConfig) =>
               progressMessageId,
               initialProgressText
             );
+            updateLastProgress(initialProgressText);
           } catch (error: any) {
             if (
               error?.error_code === 400 &&
               typeof error?.description === "string" &&
               error.description.includes("message is not modified")
             ) {
+              updateLastProgress(initialProgressText);
               return;
             }
             console.error("Не удалось обновить сообщение прогресса:", error);
@@ -337,6 +353,7 @@ const makeTelegramClient = (config: BotConfig) =>
         } else {
           const progressMessage = await ctx.reply(initialProgressText);
           progressMessageId = progressMessage.message_id;
+          updateLastProgress(initialProgressText);
         }
       };
 
@@ -351,14 +368,25 @@ const makeTelegramClient = (config: BotConfig) =>
           content: string,
           options?: Parameters<typeof ctx.api.editMessageText>[3]
         ) =>
-          Effect.promise(() =>
-            ctx.api.editMessageText(
-              chatId,
-              progressMessageId!,
-              content,
-              options
-            )
-          ).pipe(
+          Effect.gen(function* () {
+            const nextOptionsKey = serializeOptions(options);
+            if (
+              lastProgressText === content &&
+              lastProgressOptionsKey === nextOptionsKey
+            ) {
+              return;
+            }
+
+            yield* Effect.promise(() =>
+              ctx.api.editMessageText(
+                chatId,
+                progressMessageId!,
+                content,
+                options
+              )
+            );
+            yield* Effect.sync(() => updateLastProgress(content, options));
+          }).pipe(
             Effect.catchAll((error: any) =>
               Effect.sync(() => {
                 if (
@@ -366,6 +394,7 @@ const makeTelegramClient = (config: BotConfig) =>
                   typeof error?.description === "string" &&
                   error.description.includes("message is not modified")
                 ) {
+                  updateLastProgress(content, options);
                   return;
                 }
                 console.error(
