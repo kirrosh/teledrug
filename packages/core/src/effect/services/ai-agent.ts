@@ -101,11 +101,6 @@ interface AgentRoutingDecision {
   readonly reasoning?: string;
 }
 
-interface AgentRoutingOutcome extends AgentRoutingDecision {
-  readonly usedFallback: boolean;
-  readonly error?: unknown;
-}
-
 const domainAgentDefinitions: Record<DomainAgentType, DomainAgentDefinition> = {
   journal: {
     description:
@@ -242,139 +237,49 @@ const makeAIAgent = (config: AIAgentConfig) =>
 
         const model = openai(validatedConfig.model || "gpt-4o-mini");
 
-        const routingOutcome = yield* routeAgents(
+        const routingDecision = yield* routeAgents(
           model,
           validatedConfig,
           availableAgents,
           validatedContext,
           conversationHistory
-        ).pipe(
-          Effect.map(
-            (decision): AgentRoutingOutcome => ({
-              ...decision,
-              usedFallback: false,
-            })
-          ),
-          Effect.catchAll((error) =>
-            Effect.gen(function* () {
-              const fallbackOrder = DEFAULT_AGENT_FALLBACK_ORDER.slice();
-              yield* Effect.sync(() =>
-                console.warn(
-                  "⚠️ Agent routing failed, using fallback order",
-                  error
-                )
-              );
-              return {
-                agents: fallbackOrder,
-                reasoning: undefined,
-                usedFallback: true,
-                error,
-              } satisfies AgentRoutingOutcome;
-            })
-          )
         );
 
         if (
-          routingOutcome.reasoning &&
-          routingOutcome.reasoning.trim().length > 0
+          routingDecision.reasoning &&
+          routingDecision.reasoning.trim().length > 0
         ) {
-          console.log("🧠 Router reasoning:", routingOutcome.reasoning.trim());
+          console.log("🧠 Router reasoning:", routingDecision.reasoning.trim());
         }
 
-        if (routingOutcome.usedFallback) {
-          console.log(
-            `⚠️ Router fallback engaged; default order: ${routingOutcome.agents.join(
-              " → "
-            )}`
+        if (routingDecision.agents.length === 0) {
+          yield* Effect.fail(
+            new AIAgentError({
+              message: "Router did not select any domain agents",
+            })
           );
         }
 
-        const executionOrder =
-          routingOutcome.agents.length > 0
-            ? routingOutcome.agents
-            : DEFAULT_AGENT_FALLBACK_ORDER;
+        const executionOrder = routingDecision.agents;
 
-        if (routingOutcome.agents.length > 0) {
-          console.log(
-            `🛣️ Planned domain agents: ${executionOrder.join(" → ")}`
-          );
-        } else {
-          console.log(
-            `🛣️ Router returned no agents; using default order: ${executionOrder.join(
-              " → "
-            )}`
-          );
-        }
-
-        const agentPlan: AgentPlanEntry[] = [];
-        const successfulExecutions: AgentExecution[] = [];
-
-        for (const agentKind of executionOrder) {
-          const definition = domainAgentDefinitions[agentKind];
-          const toolsBundle = domainTools[agentKind];
-
-          if (!definition || !toolsBundle) {
-            agentPlan.push({
-              kind: agentKind,
-              executed: false,
-              reason: "tool bundle not available",
-            });
-            continue;
-          }
-
-          console.log(`🚀 Executing domain agent: ${agentKind}`);
-
-          const attempt = yield* runDomainAgent(
-            agentKind,
-            definition,
-            validatedConfig,
-            validatedContext,
-            baseMessages,
-            toolsBundle
-          ).pipe(Effect.either);
-
-          if (attempt._tag === "Left") {
-            yield* Effect.sync(() =>
-              console.error(
-                `❌ Domain agent ${agentKind} failed:`,
-                attempt.left
-              )
-            );
-            agentPlan.push({
-              kind: agentKind,
-              executed: false,
-              reason:
-                attempt.left instanceof Error
-                  ? attempt.left.message
-                  : String(attempt.left),
-            });
-            continue;
-          }
-
-          const execution = attempt.right;
-          const hasToolResults =
-            execution.result.toolResults &&
-            execution.result.toolResults.length > 0;
-
-          if (hasToolResults) {
-            successfulExecutions.push(execution);
-            yield* Effect.sync(() =>
-              console.log(`✅ Agent ${agentKind} produced tool results`)
-            );
-            agentPlan.push({ kind: agentKind, executed: true });
-          } else {
-            yield* Effect.sync(() =>
-              console.log(
-                `ℹ️ Agent ${agentKind} did not return tool results, moving to next`
-              )
-            );
-            agentPlan.push({
-              kind: agentKind,
-              executed: false,
-              reason: "no tool results",
-            });
-          }
-        }
+        console.log(
+          `🛣️ Planned domain agents: ${executionOrder.join(" → ")}`
+        );
+        const { agentPlan, successfulExecutions } = yield* executeAgentPlan({
+          executionOrder,
+          domainTools,
+          definitions: domainAgentDefinitions,
+          runAgent: (agentKind, definition, toolsBundle) =>
+            runDomainAgent(
+              agentKind,
+              definition,
+              validatedConfig,
+              validatedContext,
+              baseMessages,
+              toolsBundle
+            ),
+          shortCircuitAfterSuccess: false,
+        });
         if (successfulExecutions.length === 0) {
           yield* Effect.fail(
             new AIAgentError({
@@ -402,7 +307,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
           toolFormatters: combinedFormatters,
           toolProgressMessages: combinedProgressMessages,
           plan: agentPlan,
-          usedFallbackRouting: routingOutcome.usedFallback,
+          usedFallbackRouting: false,
         } satisfies AIAgentResponse;
       });
 
@@ -566,6 +471,98 @@ const routeAgents = (
   });
 };
 
+interface ExecuteAgentPlanOptions {
+  readonly executionOrder: ReadonlyArray<DomainAgentType>;
+  readonly domainTools: DomainIntegrationTools;
+  readonly definitions: Record<DomainAgentType, DomainAgentDefinition>;
+  readonly runAgent: (
+    agentKind: DomainAgentType,
+    definition: DomainAgentDefinition,
+    bundle: IntegrationToolsBundle
+  ) => Effect.Effect<AgentExecution, AIAgentError>;
+  readonly shortCircuitAfterSuccess: boolean;
+}
+
+const executeAgentPlan = ({
+  executionOrder,
+  domainTools,
+  definitions,
+  runAgent,
+  shortCircuitAfterSuccess,
+}: ExecuteAgentPlanOptions) =>
+  Effect.gen(function* () {
+    const agentPlan: AgentPlanEntry[] = [];
+    const successfulExecutions: AgentExecution[] = [];
+
+    for (const agentKind of executionOrder) {
+      const definition = definitions[agentKind];
+      const toolsBundle = domainTools[agentKind];
+
+      if (!definition || !toolsBundle) {
+        agentPlan.push({
+          kind: agentKind,
+          executed: false,
+          reason: "tool bundle not available",
+        });
+        continue;
+      }
+
+      yield* Effect.sync(() =>
+        console.log(`🚀 Executing domain agent: ${agentKind}`)
+      );
+
+      const attempt = yield* runAgent(
+        agentKind,
+        definition,
+        toolsBundle
+      ).pipe(Effect.either);
+
+      if (attempt._tag === "Left") {
+        yield* Effect.sync(() =>
+          console.error(`❌ Domain agent ${agentKind} failed:`, attempt.left)
+        );
+        agentPlan.push({
+          kind: agentKind,
+          executed: false,
+          reason:
+            attempt.left instanceof Error
+              ? attempt.left.message
+              : String(attempt.left),
+        });
+        continue;
+      }
+
+      const execution = attempt.right;
+      const toolResults = execution.result.toolResults;
+      const hasToolResults = Array.isArray(toolResults) && toolResults.length > 0;
+
+      if (hasToolResults) {
+        successfulExecutions.push(execution);
+        yield* Effect.sync(() =>
+          console.log(`✅ Agent ${agentKind} produced tool results`)
+        );
+        agentPlan.push({ kind: agentKind, executed: true });
+
+        if (shortCircuitAfterSuccess) {
+          break;
+        }
+      } else {
+        yield* Effect.sync(() =>
+          console.log(
+            `ℹ️ Agent ${agentKind} did not return tool results, moving to next`
+          )
+        );
+        agentPlan.push({
+          kind: agentKind,
+          executed: false,
+          reason: "no tool results",
+        });
+      }
+    }
+
+    return { agentPlan, successfulExecutions } as const;
+  });
+
 const runDomainAgent = (
   kind: DomainAgentType,
   definition: DomainAgentDefinition,
@@ -677,6 +674,7 @@ export const __testInternals = {
   buildMessages,
   DEFAULT_AGENT_FALLBACK_ORDER,
   routeAgents,
+  executeAgentPlan,
 } as const;
 
 export interface AIAgentFactory {
