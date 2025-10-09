@@ -267,6 +267,8 @@ const makeIntegrationRegistry = Effect.gen(function* () {
                 iv: integration.credentialsIv,
                 tag: integration.credentialsTag,
               },
+              userTimezone: userSettings.timezone,
+              userLocale: userSettings.locale,
             });
 
             calendarBundle = mergeBundles(calendarBundle, {
@@ -275,6 +277,9 @@ const makeIntegrationRegistry = Effect.gen(function* () {
               progressMessages: {
                 ...(yandexTools.progressMessages ?? {}),
               },
+              ...(yandexTools.contextMessages
+                ? { contextMessages: [...yandexTools.contextMessages] }
+                : {}),
             });
             yield* Effect.sync(() =>
               console.log(

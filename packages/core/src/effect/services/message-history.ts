@@ -6,10 +6,10 @@ import type { ConversationMessage } from "../types"
 export interface MessageHistory {
   readonly addUserMessage: (chatId: number, message: string) => Effect.Effect<void, MessageHistoryError>
   readonly addAssistantMessage: (chatId: number, message: string) => Effect.Effect<void, MessageHistoryError>
-  readonly getHistory: (chatId: number) => Effect.Effect<string[], MessageHistoryError>
+  readonly getHistory: (chatId: number) => Effect.Effect<readonly ConversationMessage[], MessageHistoryError>
   readonly clearHistory: (chatId: number) => Effect.Effect<void, MessageHistoryError>
   readonly getHistoryLength: (chatId: number) => Effect.Effect<number, MessageHistoryError>
-  readonly getRecentHistory: (chatId: number, count: number) => Effect.Effect<string[], MessageHistoryError>
+  readonly getRecentHistory: (chatId: number, count: number) => Effect.Effect<readonly ConversationMessage[], MessageHistoryError>
 }
 
 // Service tag
@@ -55,12 +55,12 @@ const makeMessageHistory = Effect.gen(function* () {
   const addAssistantMessage = (chatId: number, message: string): Effect.Effect<void, MessageHistoryError> =>
     addMessage(chatId, "assistant", message)
 
-  const getHistory = (chatId: number): Effect.Effect<string[], MessageHistoryError> =>
+  const getHistory = (chatId: number): Effect.Effect<readonly ConversationMessage[], MessageHistoryError> =>
     Effect.gen(function* () {
       try {
         const map = yield* Ref.get(histories)
         const chatHistory = map.get(chatId) || []
-        return chatHistory.map(msg => msg.content)
+        return chatHistory.slice()
       } catch (cause) {
         return yield* Effect.fail(new MessageHistoryError({
           message: `Failed to get history for chat ${chatId}`,
@@ -98,13 +98,13 @@ const makeMessageHistory = Effect.gen(function* () {
       }
     })
 
-  const getRecentHistory = (chatId: number, count: number): Effect.Effect<string[], MessageHistoryError> =>
+  const getRecentHistory = (chatId: number, count: number): Effect.Effect<readonly ConversationMessage[], MessageHistoryError> =>
     Effect.gen(function* () {
       try {
         const map = yield* Ref.get(histories)
         const chatHistory = map.get(chatId) || []
         const recentMessages = chatHistory.slice(-count)
-        return recentMessages.map(msg => msg.content)
+        return recentMessages
       } catch (cause) {
         return yield* Effect.fail(new MessageHistoryError({
           message: `Failed to get recent history for chat ${chatId}`,

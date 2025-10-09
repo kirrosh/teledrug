@@ -1,5 +1,5 @@
 import { Effect, Console, Schema, Option } from "effect"
-import { tool } from "ai"
+import { tool, type CoreMessage } from "ai"
 import { z } from "zod"
 import { createDAVClient } from "tsdav"
 import { ToolResultFormatter } from "../../types/integrations"
@@ -76,6 +76,8 @@ type YandexToolOptions = {
     iv: string
     tag: string
   }
+  userTimezone?: string
+  userLocale?: string
 }
 
 const fetchCalendarEvents = async (
@@ -374,17 +376,39 @@ const createCalendarEvent = async (
 // Создаем tools для AI SDK v5 - zod только для LLM интерфейса
 export const createYandexCalendarTools = ({
   credentials,
-  encryptedCredentials
+  encryptedCredentials,
+  userTimezone,
+  userLocale
 }: YandexToolOptions) => {
+  const displayTimezone = resolveTimezone(userTimezone)
+  const displayLocale = resolveLocale(userLocale)
+  const formatterOptions: CalendarFormatterOptions = {
+    timeZone: displayTimezone,
+    locale: displayLocale
+  }
+
   const formatters: Record<string, ToolResultFormatter> = {
-    getEvents: formatGetEventsResult,
-    createEvent: formatCreateEventResult
+    getEvents: makeFormatGetEventsResult(formatterOptions),
+    createEvent: makeFormatCreateEventResult(formatterOptions)
   }
 
   const progressMessages: Record<string, string> = {
     getEvents: "Получаю события из Яндекс.Календаря...",
     createEvent: "Создаю событие в Яндекс.Календаре..."
   }
+
+  const contextMessages: ReadonlyArray<CoreMessage> = [
+    {
+      role: "system",
+      content: [
+        `Часовой пояс пользователя: ${displayTimezone}.`,
+        "Если в запросе нет смещения, используй этот часовой пояс.",
+        "Создавай не более одного события за один запрос."
+      ].join("\n")
+    }
+  ]
+
+  let hasCreatedEvent = false
 
   const tools = {
     getEvents: tool({
@@ -509,6 +533,17 @@ export const createYandexCalendarTools = ({
       execute: async (input) => {
         const result = await Effect.runPromise(
           Effect.gen(function* () {
+            if (hasCreatedEvent) {
+              yield* Console.log("⛔ Duplicate calendar event creation blocked")
+              return yield* Schema.decodeUnknown(CreateEventResultSchema)({
+                success: false,
+                error:
+                  "За один запрос можно создать только одно событие. Отправьте новое сообщение, чтобы добавить ещё встречу.",
+                message:
+                  "Повторное создание события заблокировано до следующего запроса."
+              })
+            }
+
             yield* Console.log("🗓️ Creating Yandex Calendar event...")
 
             if (encryptedCredentials) {
@@ -564,6 +599,10 @@ export const createYandexCalendarTools = ({
                 )
             })
 
+            if (creation.success) {
+              hasCreatedEvent = true
+            }
+
             return yield* Schema.decodeUnknown(CreateEventResultSchema)(creation)
           }).pipe(
             Effect.catchAll((error) =>
@@ -581,141 +620,172 @@ export const createYandexCalendarTools = ({
     })
   }
 
-  return { tools, formatters, progressMessages }
+  return { tools, formatters, progressMessages, contextMessages }
 }
 
-const formatGetEventsResult: ToolResultFormatter = (output) =>
-  Schema.decodeUnknown(GetEventsResultSchema)(output).pipe(
-    Effect.map((result) => {
-      if (!result.success) {
-        const text = result.message
-          ? `❌ ${escapeMarkdown(result.message)}`
-          : "❌ Не удалось получить события календаря."
-        return { text, parseMode: "Markdown" as const }
-      }
+interface CalendarFormatterOptions {
+  readonly timeZone: string
+  readonly locale: string
+}
 
-      if (!result.events || result.events.length === 0) {
+const makeFormatGetEventsResult = (
+  options: CalendarFormatterOptions
+): ToolResultFormatter =>
+  (output) =>
+    Schema.decodeUnknown(GetEventsResultSchema)(output).pipe(
+      Effect.map((result) => {
+        if (!result.success) {
+          const text = result.message
+            ? `❌ ${escapeMarkdown(result.message)}`
+            : "❌ Не удалось получить события календаря."
+          return { text, parseMode: "Markdown" as const }
+        }
+
+        if (!result.events || result.events.length === 0) {
+          return {
+            text: "📅 У вас нет событий на выбранный период.",
+            parseMode: "Markdown" as const,
+          }
+        }
+
+        const formattedEvents = result.events
+          .map((event, index) => formatEventCard(event, index + 1, options))
+          .join("\n\n")
+
+        let response = `📅 **События календаря:**\n\n${formattedEvents}`
+
+        if (typeof result.totalCount === "number") {
+          response += `\n\n📊 Всего событий: ${escapeMarkdown(result.totalCount.toString())}`
+        }
+
+        if (result.message) {
+          response += `\nℹ️ ${escapeMarkdown(result.message)}`
+        }
+
+        response += `\n🕒 Часовой пояс: ${escapeMarkdown(options.timeZone)}`
+
+        return { text: response, parseMode: "Markdown" as const }
+      }),
+      Effect.catchAll(() =>
+        Effect.succeed({
+          text: "❌ Не удалось обработать результат инструмента календаря.",
+          parseMode: "Markdown" as const,
+        })
+      )
+    )
+
+const makeFormatCreateEventResult = (
+  options: CalendarFormatterOptions
+): ToolResultFormatter =>
+  (output) =>
+    Schema.decodeUnknown(CreateEventResultSchema)(output).pipe(
+      Effect.map((result) => {
+        if (!result.success) {
+          const text = result.error
+            ? `❌ ${escapeMarkdown(result.error)}`
+            : "❌ Не удалось создать событие."
+          return { text, parseMode: "Markdown" as const }
+        }
+
+        if (!result.event) {
+          const text = result.message
+            ? `✅ ${escapeMarkdown(result.message)}`
+            : "✅ Событие создано."
+          return { text, parseMode: "Markdown" as const }
+        }
+
+        const start = new Date(result.event.startDate)
+        const end = new Date(result.event.endDate)
+
+        const dateStr = start.toLocaleDateString(options.locale, {
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+          year:
+            start.getFullYear() !== new Date().getFullYear()
+              ? "numeric"
+              : undefined,
+          timeZone: options.timeZone
+        })
+
+        const startTime = start.toLocaleTimeString(options.locale, {
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone: options.timeZone
+        })
+        const endTime = end.toLocaleTimeString(options.locale, {
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone: options.timeZone
+        })
+        const timeRange = `${startTime}–${endTime}`
+
+        const summary = escapeMarkdown(result.event.summary)
+        const location = result.event.location
+          ? escapeMarkdown(result.event.location)
+          : undefined
+        const description = result.event.description
+          ? escapeMarkdown(result.event.description)
+          : undefined
+        const eventId = result.eventId
+          ? escapeMarkdown(result.eventId)
+          : undefined
+        const message = result.message
+          ? escapeMarkdown(result.message)
+          : undefined
+        const safeDateStr = escapeMarkdown(dateStr)
+        const safeTimeRange = escapeMarkdown(timeRange)
+
+        let response = `✅ Событие создано: **${summary}**\n`
+        response += `📅 ${safeDateStr}, ${safeTimeRange}\n`
+
+        if (location) {
+          response += `📍 ${location}\n`
+        }
+
+        if (description) {
+          response += `📝 ${description}\n`
+        }
+
+        if (eventId) {
+          response += `🆔 ${eventId}\n`
+        }
+
+        response += `🕒 Часовой пояс: ${escapeMarkdown(options.timeZone)}`
+
+        if (message) {
+          response += `\nℹ️ ${message}`
+        }
+
         return {
-          text: "📅 У вас нет событий на выбранный период.",
+          text: response.trim(),
           parseMode: "Markdown" as const,
         }
-      }
-
-      const formattedEvents = result.events
-        .map((event, index) => formatEventCard(event, index + 1))
-        .join("\n\n")
-
-      let response = `📅 **События календаря:**\n\n${formattedEvents}`
-
-      if (typeof result.totalCount === "number") {
-        response += `\n\n📊 Всего событий: ${escapeMarkdown(result.totalCount.toString())}`
-      }
-
-      if (result.message) {
-        response += `\nℹ️ ${escapeMarkdown(result.message)}`
-      }
-
-      return { text: response, parseMode: "Markdown" as const }
-    }),
-    Effect.catchAll(() =>
-      Effect.succeed({
-        text: "❌ Не удалось обработать результат инструмента календаря.",
-        parseMode: "Markdown" as const,
-      })
+      }),
+      Effect.catchAll(() =>
+        Effect.succeed({
+          text: "❌ Не удалось обработать результат создания события.",
+          parseMode: "Markdown" as const,
+        })
+      )
     )
-  )
 
-const formatCreateEventResult: ToolResultFormatter = (output) =>
-  Schema.decodeUnknown(CreateEventResultSchema)(output).pipe(
-    Effect.map((result) => {
-      if (!result.success) {
-        const text = result.error
-          ? `❌ ${escapeMarkdown(result.error)}`
-          : "❌ Не удалось создать событие."
-        return { text, parseMode: "Markdown" as const }
-      }
-
-      if (!result.event) {
-        const text = result.message
-          ? `✅ ${escapeMarkdown(result.message)}`
-          : "✅ Событие создано."
-        return { text, parseMode: "Markdown" as const }
-      }
-
-      const start = new Date(result.event.startDate)
-      const end = new Date(result.event.endDate)
-
-      const dateStr = start.toLocaleDateString("ru-RU", {
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-        year:
-          start.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined,
-      })
-
-      const timeRange = `${start.toLocaleTimeString("ru-RU", {
-        hour: "2-digit",
-        minute: "2-digit",
-      })}–${end.toLocaleTimeString("ru-RU", {
-        hour: "2-digit",
-        minute: "2-digit",
-      })}`
-
-      const summary = escapeMarkdown(result.event.summary)
-      const location = result.event.location
-        ? escapeMarkdown(result.event.location)
-        : undefined
-      const description = result.event.description
-        ? escapeMarkdown(result.event.description)
-        : undefined
-      const eventId = result.eventId ? escapeMarkdown(result.eventId) : undefined
-      const message = result.message ? escapeMarkdown(result.message) : undefined
-      const safeDateStr = escapeMarkdown(dateStr)
-      const safeTimeRange = escapeMarkdown(timeRange)
-
-      let response = `✅ Событие создано: **${summary}**\n`
-      response += `📅 ${safeDateStr}, ${safeTimeRange}\n`
-
-      if (location) {
-        response += `📍 ${location}\n`
-      }
-
-      if (description) {
-        response += `📝 ${description}\n`
-      }
-
-      if (eventId) {
-        response += `🆔 ${eventId}\n`
-      }
-
-      if (message) {
-        response += `ℹ️ ${message}`
-      }
-
-      return {
-        text: response.trim(),
-        parseMode: "Markdown" as const,
-      }
-    }),
-    Effect.catchAll(() =>
-      Effect.succeed({
-        text: "❌ Не удалось обработать результат создания события.",
-        parseMode: "Markdown" as const,
-      })
-    )
-  )
-
-const formatEventCard = (event: CalendarEvent, index: number) => {
+const formatEventCard = (
+  event: CalendarEvent,
+  index: number,
+  options: CalendarFormatterOptions
+) => {
   const start = new Date(event.startDate)
   const end = new Date(event.endDate)
 
-  const formattedDate = start.toLocaleDateString("ru-RU", {
+  const formattedDate = start.toLocaleString(options.locale, {
     weekday: "long",
     year: "numeric",
     month: "long",
     day: "numeric",
     hour: "2-digit",
-    minute: "2-digit"
+    minute: "2-digit",
+    timeZone: options.timeZone
   })
 
   const durationMinutes = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000))
@@ -763,7 +833,38 @@ const formatEventCard = (event: CalendarEvent, index: number) => {
     card += `   🏷 ${escapeMarkdown(tags)}\n`
   }
 
+  card += `   🕒 ${escapeMarkdown(options.timeZone)}\n`
+
   return card.trimEnd()
+}
+
+const DEFAULT_CALENDAR_TIMEZONE = "UTC"
+const DEFAULT_CALENDAR_LOCALE = "ru-RU"
+
+const resolveTimezone = (value?: string): string => {
+  const candidate = value?.trim()
+  if (!candidate) {
+    return DEFAULT_CALENDAR_TIMEZONE
+  }
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: candidate }).format()
+    return candidate
+  } catch {
+    return DEFAULT_CALENDAR_TIMEZONE
+  }
+}
+
+const resolveLocale = (value?: string): string => {
+  const candidate = value?.trim()
+  if (!candidate) {
+    return DEFAULT_CALENDAR_LOCALE
+  }
+  try {
+    new Intl.DateTimeFormat(candidate).format(new Date())
+    return candidate
+  } catch {
+    return DEFAULT_CALENDAR_LOCALE
+  }
 }
 
 export const YandexCalendarIntegration = {

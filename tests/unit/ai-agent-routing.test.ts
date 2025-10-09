@@ -1,16 +1,21 @@
 import { describe, it, expect } from "bun:test";
 import { Effect } from "effect";
 
-import {
-  __testInternals,
-} from "../../packages/core/src/effect/services/ai-agent";
+import { __testInternals } from "../../packages/core/src/effect/services/ai-agent";
 import type {
   IntegrationToolsBundle,
   DomainIntegrationTools,
   DomainAgentType,
 } from "../../packages/core/src/effect/services/integration-registry";
+import type { ConversationMessage } from "../../packages/core/src/effect/types";
 
-const { executeAgentPlan, domainAgentDefinitions } = __testInternals;
+const {
+  executeAgentPlan,
+  domainAgentDefinitions,
+  buildMessages,
+  normalizeHistory,
+  HISTORY_REPLAY_LIMIT,
+} = __testInternals;
 
 const createBundle = (toolName: string): IntegrationToolsBundle => ({
   tools: { [toolName]: {} as any },
@@ -125,5 +130,54 @@ describe("executeAgentPlan", () => {
       "tasks",
     ]);
     expect(agentPlan.every((entry) => entry.executed)).toBeTrue();
+  });
+});
+
+describe("history helpers", () => {
+  it("normalizes history to limit and trims whitespace", () => {
+    const baseTimestamp = Date.now();
+    const history: ConversationMessage[] = Array.from(
+      { length: HISTORY_REPLAY_LIMIT + 2 },
+      (_, index) => ({
+        role: index % 2 === 0 ? "assistant" : "user",
+        content: `  message ${index}  `,
+        timestamp: baseTimestamp - index * 1000,
+      })
+    );
+
+    const normalized = normalizeHistory(history, HISTORY_REPLAY_LIMIT);
+    expect(normalized).toHaveLength(HISTORY_REPLAY_LIMIT);
+    expect(normalized.every((entry) => entry.content === entry.content.trim())).toBeTrue();
+    expect(normalized[0]?.role).toBe("assistant");
+  });
+
+  it("builds messages including existing history and new user input", () => {
+    const history: ConversationMessage[] = [
+      {
+        role: "assistant",
+        content: "🧭 Задачи: #12 — Запись на чистку зубов",
+        timestamp: Date.now() - 2000,
+      },
+      {
+        role: "user",
+        content: "Спасибо!",
+        timestamp: Date.now() - 1000,
+      },
+    ];
+
+    const messages = buildMessages("Закрой эту задачу.", history);
+    expect(messages).toHaveLength(3);
+    expect(messages[0]).toEqual({
+      role: "assistant",
+      content: "🧭 Задачи: #12 — Запись на чистку зубов",
+    });
+    expect(messages[1]).toEqual({
+      role: "user",
+      content: "Спасибо!",
+    });
+    expect(messages[2]).toEqual({
+      role: "user",
+      content: "Закрой эту задачу.",
+    });
   });
 });

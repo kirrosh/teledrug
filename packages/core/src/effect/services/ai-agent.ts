@@ -16,6 +16,7 @@ import {
   type IntegrationToolsBundle,
 } from "./integration-registry";
 import { IntegrationError, ToolResultFormatter } from "../types/integrations";
+import type { ConversationMessage } from "../types";
 
 // AI Agent Configuration Schema
 const AIAgentConfigSchema = Schema.Struct({
@@ -44,13 +45,13 @@ type SimpleChatContext = Schema.Schema.Type<typeof SimpleChatContextSchema>;
 export interface AIAgent {
   readonly processMessage: (
     context: SimpleChatContext,
-    conversationHistory?: readonly string[]
+    conversationHistory?: readonly ConversationMessage[]
   ) => Effect.Effect<AIAgentResponse, AIAgentError, IntegrationRegistry>;
 
   readonly processText: (
     userId: string | number,
     text: string,
-    conversationHistory?: readonly string[]
+    conversationHistory?: readonly ConversationMessage[]
   ) => Effect.Effect<AIAgentResponse, AIAgentError, IntegrationRegistry>;
 }
 
@@ -89,6 +90,8 @@ const DEFAULT_AGENT_FALLBACK_ORDER: readonly DomainAgentType[] = [
   "digest",
   "settings",
 ];
+
+const HISTORY_REPLAY_LIMIT = 10;
 
 interface AgentPlanEntry {
   readonly kind: DomainAgentType;
@@ -132,7 +135,7 @@ const domainAgentDefinitions: Record<DomainAgentType, DomainAgentDefinition> = {
         minute: "2-digit",
       });
       const utcNow = now.toISOString();
-      return `Ты — агент календаря TeleDrug. Ты создаёшь события в календаре. Всегда действуй по готовому запросу — не задавай уточняющих вопросов. Если пользователь дал недостаточно данных, оцени запрос и дополни недостающие части по умолчанию, не перекладывая решение на пользователя.
+      return `Ты — агент календаря TeleDrug. Ты создаёшь события в календаре. Всегда действуй по готовому запросу — не задавай уточняющих вопросов. Если пользователь дал недостаточно данных, оцени запрос и дополни недостающие части по умолчанию, не перекладывая решение на пользователя. Создавай не более одного события за обращение, если явно не просят несколько. Передавай время в ISO-формате (YYYY-MM-DDTHH:mm:ss±HH:MM) и используй часовой пояс пользователя, если он указан в системных подсказках.
 
 Текущая дата и время:
 - Локальное (Europe/Moscow): ${localNow}
@@ -179,7 +182,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
 
     const processMessage = (
       context: SimpleChatContext,
-      conversationHistory: readonly string[] = []
+      conversationHistory: readonly ConversationMessage[] = []
     ): Effect.Effect<AIAgentResponse, AIAgentError, IntegrationRegistry> =>
       Effect.gen(function* () {
         const validatedContext = yield* Schema.decodeUnknown(
@@ -200,9 +203,26 @@ const makeAIAgent = (config: AIAgentConfig) =>
           )
         );
 
+        const normalizedHistory = normalizeHistory(
+          conversationHistory,
+          HISTORY_REPLAY_LIMIT
+        );
+
+        if (normalizedHistory.length > 0) {
+          yield* Effect.sync(() =>
+            console.log(
+              `🧵 History shared with LLM (${normalizedHistory.length} message(s))`
+            )
+          );
+        } else if (conversationHistory.length > 0) {
+          yield* Effect.sync(() =>
+            console.log("🧵 History trimmed to zero after normalization")
+          );
+        }
+
         const baseMessages = buildMessages(
           validatedContext.messageContent,
-          conversationHistory
+          normalizedHistory
         );
 
         const integrationRegistry = yield* IntegrationRegistry;
@@ -242,7 +262,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
           validatedConfig,
           availableAgents,
           validatedContext,
-          conversationHistory
+          normalizedHistory
         );
 
         if (
@@ -314,7 +334,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
     const processText = (
       userId: string | number,
       text: string,
-      conversationHistory: readonly string[] = []
+      conversationHistory: readonly ConversationMessage[] = []
     ): Effect.Effect<AIAgentResponse, AIAgentError, IntegrationRegistry> => {
       const context: SimpleChatContext = {
         userId,
@@ -380,7 +400,7 @@ const routeAgents = (
     tools: string[];
   }>,
   context: SimpleChatContext,
-  conversationHistory: readonly string[]
+  conversationHistory: readonly ConversationMessage[]
 ): Effect.Effect<AgentRoutingDecision, AIAgentError> => {
   if (availableAgents.length === 0) {
     return Effect.succeed({ agents: [] });
@@ -402,10 +422,16 @@ const routeAgents = (
     return `- ${agent.kind}: ${agent.description} (инструменты: ${tools}).`;
   });
 
-  const historySnippet = conversationHistory
-    .slice(-5)
-    .map((item, index) => `${index + 1}. ${item}`)
-    .join("\n");
+  const historySnippet =
+    conversationHistory.length === 0
+      ? "(история не используется)"
+      : conversationHistory
+          .slice(-5)
+          .map((item, index) => {
+            const who = item.role === "assistant" ? "TeleDrug" : "Пользователь";
+            return `${index + 1}. ${who}: ${item.content}`;
+          })
+          .join("\n");
 
   return Effect.tryPromise({
     try: async () => {
@@ -420,12 +446,14 @@ const routeAgents = (
                 "Ты — маршрутизатор TeleDrug. Выбирай только тех специализированных агентов, которые действительно нужны для ответа на запрос пользователя. Не добавляй агентов ради подстраховки. Если достаточно одного агента — верни массив с единственным именем. Если подходящих агентов нет, верни пустой массив." +
                 "\n\nПравила выбора:" +
                 "\n- Если пользователь перечисляет задачи, планы или поручения — обязательно добавь агента tasks." +
+                "\n- Если пользователь сообщает о выполнении, переносе или отмене задачи — тоже выбирай агента tasks, чтобы обновить список." +
                 "\n- Если вместе с задачами пользователь делится эмоциями, переживаниями или делает заметку для дневника — выбери и tasks, и journal." +
                 "\n- Агента journal используй только для записей о состоянии, эмоциях и размышлениях без явных задач." +
                 "\n- Если пользователь описывает событие с конкретной датой, временем или диапазоном — обязательно добавь агента calendar." +
                 "\n- Если при описании события пользователь также делится эмоциями, переживаниями или личными ожиданиями — выбери и calendar, и journal." +
                 "\n- Не выбирай агента tasks, если пользователь не просит явно управлять задачами или поручениями." +
                 "\n- Агента settings выбирай ТОЛЬКО когда пользователь явно просит изменить личные настройки (город, страну, часовой пояс, предпочтения). Простое упоминание города, поездки или места события не означает изменение настроек." +
+                "\n- История диалога передаётся для контекста. Учитывай её только если пользователь явно ссылается на прошлые сообщения. Если ниже указано, что истории нет, обрабатывай запрос как отдельный." +
                 "\nДоступные агенты и их обязанности:\n" +
                 systemPromptLines.join("\n"),
             },
@@ -435,7 +463,7 @@ const routeAgents = (
                 context.messageContent
               }\nТип взаимодействия: ${
                 context.interactionType
-              }\nПоследние сообщения:\n${historySnippet || "(нет)"}`,
+              }\nПоследние сообщения:\n${historySnippet}`,
             },
           ],
           maxOutputTokens: config.maxTokens,
@@ -640,21 +668,39 @@ const runDomainAgent = (
     } satisfies AgentExecution;
   });
 
+const normalizeHistory = (
+  conversationHistory: readonly ConversationMessage[],
+  maxItems: number
+): ReadonlyArray<ConversationMessage> => {
+  if (maxItems <= 0) {
+    return [];
+  }
+
+  return conversationHistory
+    .filter(
+      (entry): entry is ConversationMessage =>
+        Boolean(entry?.content?.trim()) &&
+        (entry?.role === "user" || entry?.role === "assistant")
+    )
+    .slice(-maxItems)
+    .map((entry) => ({
+      role: entry.role,
+      content: entry.content.trim(),
+      timestamp: entry.timestamp,
+    }));
+};
+
 const buildMessages = (
   currentMessage: string,
-  conversationHistory: readonly string[]
+  conversationHistory: readonly ConversationMessage[]
 ): Array<CoreMessage> => {
   const messages: Array<CoreMessage> = [];
 
-  const recentHistory = conversationHistory.slice(-10);
-  for (let i = 0; i < recentHistory.length; i++) {
-    const content = recentHistory[i];
-    if (content && content.trim()) {
-      messages.push({
-        role: i % 2 === 0 ? "user" : "assistant",
-        content: content.trim(),
-      });
-    }
+  for (const entry of conversationHistory) {
+    messages.push({
+      role: entry.role,
+      content: entry.content,
+    });
   }
 
   messages.push({
@@ -675,6 +721,8 @@ export const __testInternals = {
   DEFAULT_AGENT_FALLBACK_ORDER,
   routeAgents,
   executeAgentPlan,
+  normalizeHistory,
+  HISTORY_REPLAY_LIMIT,
 } as const;
 
 export interface AIAgentFactory {

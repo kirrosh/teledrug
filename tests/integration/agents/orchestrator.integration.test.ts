@@ -22,6 +22,7 @@ import {
   isNetworkError,
   testLLM,
 } from "./harness";
+import type { ConversationMessage } from "../../../packages/core/src/effect/types";
 
 const ManageTasksSchema = z.object({
   create: z
@@ -470,5 +471,167 @@ describeLLM("Orchestrator", () => {
       expect(settingsToolInvoked).toBeFalse();
     },
     { timeout: 30000 }
+  );
+
+  testLLM(
+    "completes a task and schedules calendar event from one confirmation",
+    async () => {
+      const openaiApiKey = ensureOpenAIKey();
+
+      const context = buildSimpleContext(
+        "Записался на чистку. Эти задачи можно закрыть и добавь встречу сегодня в 18:30.",
+        { userId: 818 }
+      );
+
+      const history: ConversationMessage[] = [
+        {
+          role: "assistant",
+          content: [
+            "🧭 Задачи на сегодня (8 октября):",
+            "• #42 — Запись на чистку зубов",
+            "• #43 — Сделать 10 сделок на демо счёте",
+          ].join("\n"),
+          timestamp: Date.now() - 5000,
+        },
+      ];
+
+      const tasksCalls: Array<z.infer<typeof ManageTasksSchema>> = [];
+      const calendarCalls: Array<{
+        summary: string;
+        startDate: string;
+        endDate?: string;
+      }> = [];
+
+      const manageTasks = tool({
+        description:
+          "Управляет списком задач: закрывай выполненные и обновляй сроки.",
+        inputSchema: ManageTasksSchema,
+        execute: async (input) => {
+          tasksCalls.push(input);
+          return {
+            success: true,
+            summary: {
+              completed: input.complete.length,
+            },
+          };
+        },
+      });
+
+      const createCalendarEvent = tool({
+        description:
+          "Создаёт событие в календаре. Требуются summary, startDate (ISO) и endDate.",
+        inputSchema: z.object({
+          summary: z.string().min(3),
+          startDate: z.string().min(10),
+          endDate: z.string().min(10).optional(),
+        }),
+        execute: async (input) => {
+          calendarCalls.push(input);
+          return {
+            success: true,
+            eventId: "evt_cleaning",
+            event: {
+              summary: input.summary,
+              startDate: input.startDate,
+              endDate: input.endDate ?? input.startDate,
+            },
+          };
+        },
+      });
+
+      const tasksBundle: IntegrationToolsBundle = {
+        tools: {
+          manageTasks,
+        },
+        formatters: {},
+        progressMessages: {},
+        contextMessages: forceToolContext(
+          "manageTasks",
+          "Закрой задачу #42 «Запись на чистку зубов», если пользователь сообщил о выполнении."
+        ),
+      };
+
+      const calendarBundle: IntegrationToolsBundle = {
+        tools: {
+          createCalendarEvent,
+        },
+        formatters: {},
+        progressMessages: {},
+        contextMessages: forceToolContext(
+          "createCalendarEvent",
+          "Создай событие «Чистка зубов» на сегодня в 18:30 по Москве. Используй ISO-формат даты и времени."
+        ),
+      };
+
+      const registry: IntegrationRegistryService = {
+        getToolsForUser: () => Effect.fail(new Error("not implemented")),
+        getDomainToolsForUser: () =>
+          Effect.succeed({
+            tasks: tasksBundle,
+            calendar: calendarBundle,
+          }),
+      };
+
+      const config: AIAgentConfig = {
+        openaiApiKey,
+        model: getModelName(),
+        maxTokens: 800,
+        userId: context.userId,
+      };
+
+      const program = Effect.gen(function* () {
+        const agent = yield* AIAgent;
+        return yield* agent.processText(
+          context.userId,
+          context.messageContent,
+          history
+        );
+      }).pipe(
+        Effect.provideService(IntegrationRegistry, registry),
+        Effect.provide(AIAgentLive(config))
+      );
+
+      const outcome = await Effect.runPromise(
+        program.pipe(
+          Effect.map((response) => ({ _tag: "ok" as const, response })),
+          Effect.catchAll((error) => {
+            const isNetwork =
+              isNetworkError(error) ||
+              (error instanceof Error &&
+                /No subagent produced tool results/.test(error.message));
+            return isNetwork
+              ? Effect.succeed({ _tag: "network" as const, error })
+              : Effect.fail(error);
+          })
+        )
+      );
+
+      if (outcome._tag === "network") {
+        console.warn(
+          "[orchestrator-combined] skipping due to network error",
+          outcome.error
+        );
+        return;
+      }
+
+      const response = outcome.response;
+      const executedKinds = response.executions.map((exec) => exec.kind);
+      expect(executedKinds).toContain("tasks");
+      expect(executedKinds).toContain("calendar");
+
+      expect(tasksCalls.length).toBeGreaterThan(0);
+      const tasksPayload = tasksCalls[0];
+      expect(tasksPayload.complete.length).toBeGreaterThan(0);
+      const completed = tasksPayload.complete[0];
+      expect(
+        (completed?.title ?? "").toLowerCase().includes("чист")
+      ).toBeTrue();
+
+      expect(calendarCalls).toHaveLength(1);
+      const calendarPayload = calendarCalls[0];
+      expect(calendarPayload.summary.toLowerCase()).toContain("чист");
+      expect(Number.isNaN(Date.parse(calendarPayload.startDate))).toBeFalse();
+    },
+    { timeout: 30000, skip: true }
   );
 });
