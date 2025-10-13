@@ -14,7 +14,7 @@ import {
   getDayBoundsInTimezone,
   formatInTimezone,
   normalizeTimezone,
-} from "../../shared/timezone";
+} from "@teledrug/timezone";
 const formatEventLine = (
   event: CalendarEvent,
   formatter: Intl.DateTimeFormat

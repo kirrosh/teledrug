@@ -15,7 +15,9 @@
   },
   "dependencies": {
     "@teledrug/db": "workspace:*",
+    "@teledrug/encryption": "workspace:*",
     "@teledrug/og": "workspace:*",
+    "@teledrug/timezone": "workspace:*",
     "@ai-sdk/openai": "^2.0.32",
     "@effect/platform": "^0.90.10",
     "@effect/platform-node": "^0.96.1",

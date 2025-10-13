@@ -1,9 +1,5 @@
 import { Data } from "effect"
-
-export class CryptographyError extends Data.TaggedError("CryptographyError")<{
-  message: string
-  cause?: unknown
-}> {}
+export { CryptographyError } from "@teledrug/encryption"
 
 export class MessageHistoryError extends Data.TaggedError("MessageHistoryError")<{
   message: string

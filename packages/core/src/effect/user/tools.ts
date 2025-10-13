@@ -4,7 +4,7 @@ import type { CoreMessage } from "ai";
 import { z } from "zod";
 import { UserRepository } from "../services/user-repository";
 import { DigestSettingsRepository } from "../services/digest-settings";
-import { isValidTimezone } from "../shared/timezone";
+import { isValidTimezone } from "@teledrug/timezone";
 import type { ToolResultFormatter } from "../types/integrations";
 import type { UserSettings } from "../schemas/database";
 

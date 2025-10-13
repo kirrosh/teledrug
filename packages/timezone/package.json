@@ -1,0 +1,17 @@
+{
+  "name": "@teledrug/timezone",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "echo \"@teledrug/timezone: nothing to build\"",
+    "lint": "echo \"@teledrug/timezone: no lint configured\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "5.9.2"
+  }
+}

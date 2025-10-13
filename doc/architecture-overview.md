@@ -22,6 +22,8 @@
 ## Repository Layout
 - `packages/core`: Effect based domain logic, integrations, repositories, and cron jobs.
 - `packages/db`: Shared Drizzle ORM package with schema definitions, PostgreSQL client, and migrations.
+- `packages/encryption`: AES-256-GCM services (`EncryptionService`, `CryptographyService`, error types).
+- `packages/timezone`: Pure timezone utilities (validation, bounds, formatting helpers).
 - `packages/og`: OG image renderer for digest cards using `@vercel/og`.
 - `apps/bot`: Bun entry point that runs the Telegram bot and optional health server.
 - `apps/daily-greeting`: Bun entry points that run the morning digest and evening prompt jobs.
@@ -35,19 +37,28 @@
 - Hosts canonical migrations under `packages/db/migrations` and a `drizzle.config.ts` for CLI usage.
 - Shared across `@teledrug/core`, cron jobs, and the mini app to ensure a single source of truth for schema and database access.
 
+## Encryption Package (`packages/encryption`)
+- Provides `EncryptionService` and `CryptographyService` layers built on AES-256-GCM with Effect context tags.
+- Exports error types (`CryptographyError`, `EncryptionError`, `DecryptionError`) and the shared `EncryptedData` type.
+- Used by `@teledrug/core` layers (`main`, `daily-digest`) and repositories to encrypt user integrations and secrets.
+
+## Timezone Package (`packages/timezone`)
+- Contains pure utilities for timezone validation, normalization, day-bound calculations, and locale-aware formatting.
+- Reused by digest modules, task repository, and user settings tool without pulling in other Core dependencies.
+
 ## Core Package (`packages/core`)
 
 ### Runtime And Layers
 - `effect/index.ts`: Validates critical env vars, resolves `MainLayer`, starts `BotApplication`, traps SIGINT/SIGTERM, and sleeps to keep the process alive.
 - `effect/layers/main.ts`: Declares dependency graph. Provides:
-  - Cryptography/encryption services (AES-GCM with `ENCRYPTION_MASTER_KEY`).
+  - Cryptography/encryption services from `@teledrug/encryption` (AES-GCM with `ENCRYPTION_MASTER_KEY`).
   - Database backed repositories (user, digest, journal, tasks).
   - `UserConfigStorage` cache (Effect Cache with 15 minute TTL).
   - `IntegrationRegistry` with domain tool bundles.
   - `AIAgentFactoryLive` configured with OpenAI API key and default model.
   - `TelegramClientLive` configured with `BotConfig` (token, optional mini app URL).
   - Wraps everything into the `BotApplicationLive` layer.
-- `effect/layers/daily-digest.ts`: Minimal layer supplying `DigestSettingsRepository`, `UserRepository` (with encryption), and `TaskRepository` for cron jobs.
+- `effect/layers/daily-digest.ts`: Minimal layer supplying `DigestSettingsRepository`, `UserRepository` (with `EncryptionService`), and `TaskRepository` for cron jobs.
 
 ### Service Modules
 #### `telegram-client.ts`
@@ -128,10 +139,6 @@
 - Provides `get`, `addIntegration`, `removeIntegration`, `createDefaultConfig`, `invalidate`.
 - Combines repository data and decrypted integrations for quick `/integrations` command responses.
 
-#### `cryptography.ts` and `encryption.ts`
-- AES-256-GCM encryption services. `cryptography.ts` emits `CryptographyError` using `@effect` errors; `encryption.ts` provides plain classes used by repositories.
-- Both expect a 32 byte hex `ENCRYPTION_MASTER_KEY`, with dev fallback auto generated key and console warning.
-
 #### `journal-analysis`, `journal-repository`, `task-repository`, `user-repository`, `digest-settings`
 - Collaborate to persist LLM outputs, digest settings, user profile, and tasks.
 
@@ -179,7 +186,7 @@
 - Known issue from doc: result formatter currently formats times in server timezone; fix required.
 
 ### Shared Utilities
-- `effect/shared/timezone.ts`: validates timezones, computes day bounds, formats in user locale/timezone, caches Intl formatters.
+- `@teledrug/timezone`: validates timezones, computes day bounds, formats in user locale/timezone, caches Intl formatters.
 - `effect/core/tool-progress.ts`: Tag for injecting progress reporter (used to update Telegram progress messages).
 - `effect/types/*`: Common schemas for encrypted data, messages, and integration metadata/errors.
 - `effect/errors/index.ts`: Domain specific error tags (cryptography, history, Telegram, config, AI).
@@ -271,7 +278,7 @@
   - Calendar formatter ignores user timezone, causing Telegram/UI mismatch.
   - Router lacks explicit rule for completion intents.
   - Recommendation: fix `MessageHistory` role preservation, adjust router prompt, normalise timezones in calendar formatter, limit duplicate calendar tool calls.
-- Some services exist in both `cryptography.ts` and `encryption.ts`; ensure future rewrite unifies responsibilities.
+- Encryption services now live in `@teledrug/encryption`; keep usage centralized through that package during further refactors.
 - Weather/FX modules cache results in memory; consider TTL or invalidation if deployed across multiple instances.
 - Yandex calendar integration currently only triggered for TEXT/VOICE interactions; add IMAGE/FORWARD support if needed.
 

@@ -5,7 +5,7 @@ import {
   TaskRepository as TaskRepositoryTag,
   type TaskRepository as TaskRepositoryService,
 } from "../../services/task-repository";
-import { getDayBoundsInTimezone, normalizeTimezone } from "../../shared/timezone";
+import { getDayBoundsInTimezone, normalizeTimezone } from "@teledrug/timezone";
 
 interface TaskSettings {
   readonly limit?: number;

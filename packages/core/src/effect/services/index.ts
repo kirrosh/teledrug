@@ -1,5 +1,5 @@
 // Export all services
-export * from "./cryptography"
+export * from "@teledrug/encryption"
 export * from "./message-history"
 export * from "./telegram-client"
 export * from "./bot-application"

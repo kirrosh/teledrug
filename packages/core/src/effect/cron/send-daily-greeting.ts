@@ -14,7 +14,7 @@ import {
   type DailyDigestImagePayload,
 } from "@teledrug/og";
 import { UserRepository } from "../services/user-repository";
-import { normalizeTimezone } from "../shared/timezone";
+import { normalizeTimezone } from "@teledrug/timezone";
 
 const greetingPrefix = "🌞 Доброе утро!";
 const TARGET_HOUR = 10;

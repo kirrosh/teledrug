@@ -15,7 +15,7 @@ import {
   type DigestModuleResult,
   type DigestUserSettingsSnapshot,
 } from "./types";
-import { normalizeTimezone } from "../shared/timezone";
+import { normalizeTimezone } from "@teledrug/timezone";
 
 const MODULES: ReadonlyArray<DigestModuleImpl<any>> = [
   WeatherDigestModule,

@@ -1,10 +1,5 @@
-import { randomBytes, createCipheriv, createDecipheriv } from 'crypto';
-
-export interface EncryptedData {
-  encrypted: string;
-  iv: string;
-  tag: string;
-}
+import { randomBytes, createCipheriv, createDecipheriv } from "crypto";
+import type { EncryptedData } from "@teledrug/encryption";
 
 export class EncryptionService {
   private readonly algorithm = 'aes-256-gcm';

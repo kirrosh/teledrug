@@ -14,7 +14,7 @@ import {
   type SQL,
 } from "drizzle-orm";
 import { db, tasks, type Task, type NewTask } from "@teledrug/db";
-import { getDayBoundsInTimezone, normalizeTimezone } from "../shared/timezone";
+import { getDayBoundsInTimezone, normalizeTimezone } from "@teledrug/timezone";
 
 export class TaskRepositoryError extends Data.TaggedError("TaskRepositoryError")<{
   readonly message: string;

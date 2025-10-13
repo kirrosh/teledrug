@@ -2,7 +2,7 @@ import { Effect, Context, Layer, Option } from "effect"
 import { eq, and } from "drizzle-orm"
 import { db, users, userIntegrations, userSettings } from "@teledrug/db"
 import { DigestSettingsRepository } from "./digest-settings"
-import { EncryptionService, type EncryptedData } from "./encryption"
+import { EncryptionService, type EncryptedData } from "@teledrug/encryption"
 import {
   type User,
   type NewUser,

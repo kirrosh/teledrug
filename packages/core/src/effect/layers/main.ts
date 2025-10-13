@@ -1,9 +1,8 @@
 import { Layer, pipe } from "effect";
-import { CryptographyServiceLive } from "../services/cryptography";
+import { CryptographyServiceLive, EncryptionServiceLive } from "@teledrug/encryption";
 import { MessageHistoryLive } from "../services/message-history";
 import { TelegramClientLive } from "../services/telegram-client";
 import { BotApplicationLive } from "../services/bot-application";
-import { EncryptionServiceLive } from "../services/encryption";
 import { UserRepositoryLive } from "../services/user-repository";
 import { UserConfigStorageLive } from "../services/user-config-storage";
 import { AIAgentFactoryLive } from "../services/ai-agent";
