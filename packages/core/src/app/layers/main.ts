@@ -1,17 +1,17 @@
 import { Layer, pipe } from "effect";
 import { CryptographyServiceLive, EncryptionServiceLive } from "@teledrug/encryption";
-import { MessageHistoryLive } from "../services/message-history";
-import { TelegramClientLive } from "../services/telegram-client";
-import { BotApplicationLive } from "../services/bot-application";
-import { UserRepositoryLive } from "../services/user-repository";
-import { UserConfigStorageLive } from "../services/user-config-storage";
-import { AIAgentFactoryLive } from "../services/ai-agent";
-import { IntegrationRegistryLive } from "../services/integration-registry";
-import { DigestSettingsRepositoryLive } from "../services/digest-settings";
-import { JournalAnalysisServiceLive } from "../services/journal-analysis";
-import { JournalRepositoryLive } from "../services/journal-repository";
-import { TaskRepositoryLive } from "../services/task-repository";
-import type { BotConfig } from "../types";
+import { MessageHistoryLive } from "../../services/message-history";
+import { TelegramClientLive } from "../../bot/telegram/telegram-bot";
+import { BotApplicationLive } from "../../application/bot-application";
+import { UserRepositoryLive } from "../../services/user-repository";
+import { UserConfigStorageLive } from "../../services/user-config-storage";
+import { AIAgentFactoryLive } from "../../services/ai-agent";
+import { IntegrationRegistryLive } from "../../services/integration-registry";
+import { DigestSettingsRepositoryLive } from "../../services/digest-settings";
+import { JournalAnalysisServiceLive } from "../../services/journal-analysis";
+import { JournalRepositoryLive } from "../../services/journal-repository";
+import { TaskRepositoryLive } from "../../services/task-repository";
+import type { BotConfig } from "../../types";
 
 // Create main application layer
 export const createMainLayer = (

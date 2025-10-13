@@ -1,5 +1,5 @@
 import { Effect, Console, Duration } from "effect"
-import { BotApplication } from "./services/bot-application"
+import { BotApplication } from "../application/bot-application"
 import { MainLayer } from "./layers/main"
 
 // Main program

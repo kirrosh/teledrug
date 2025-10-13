@@ -1,8 +1,8 @@
 import { Layer, pipe } from "effect";
 import { EncryptionServiceLive } from "@teledrug/encryption";
-import { DigestSettingsRepositoryLive, DigestSettingsRepository } from "../services/digest-settings";
-import { UserRepositoryLive, UserRepository } from "../services/user-repository";
-import { TaskRepositoryLive, TaskRepository } from "../services/task-repository";
+import { DigestSettingsRepositoryLive, DigestSettingsRepository } from "../../services/digest-settings";
+import { UserRepositoryLive, UserRepository } from "../../services/user-repository";
+import { TaskRepositoryLive, TaskRepository } from "../../services/task-repository";
 
 /**
  * Shared layer used by daily digest jobs. Provides repositories and services

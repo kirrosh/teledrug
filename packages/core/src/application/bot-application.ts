@@ -4,8 +4,8 @@ import {
   TelegramClientError,
   MessageHistoryError,
 } from "../errors";
-import { TelegramClient } from "./telegram-client";
-import { MessageHistory } from "./message-history";
+import { TelegramClient } from "../bot/telegram/telegram-bot";
+import { MessageHistory } from "../services/message-history";
 
 // Service interface
 export interface BotApplication {

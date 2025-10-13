@@ -1,4 +1,4 @@
-import "@teledrug/core/effect/index";
+import "@teledrug/core/app/bootstrap";
 
 const parseBoolean = (value: string | undefined, fallback: boolean) => {
   if (value === undefined) return fallback;

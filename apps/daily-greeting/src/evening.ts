@@ -1,2 +1,1 @@
-import "@teledrug/core/effect/cron/send-evening-prompt";
-
+import "@teledrug/core/cron/send-evening-prompt";
