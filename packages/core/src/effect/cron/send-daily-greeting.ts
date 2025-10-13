@@ -1,6 +1,5 @@
 import { Effect } from "effect";
-import { db, sql } from "../../storage/database/client";
-import { users, userSettings } from "../../storage/database/schema";
+import { db, sql, users, userSettings } from "@teledrug/db";
 import { eq } from "drizzle-orm";
 import { runDailyDigest } from "../digest/runner";
 import { DailyDigestLayer } from "../layers/daily-digest";

@@ -1,10 +1,10 @@
 import { Effect, Layer, Context } from "effect";
-import { db } from "../../storage/database/client";
 import {
+  db,
   digestModules,
   digestModuleSettings,
   type DigestModule,
-} from "../../storage/database/schema";
+} from "@teledrug/db";
 import { and, eq } from "drizzle-orm";
 import type { DigestModuleId } from "../digest/types";
 

@@ -1,14 +1,14 @@
 import { Effect, Context, Layer, Data, Option } from "effect";
 import { and, eq, inArray } from "drizzle-orm";
 import {
+  db,
   journalEntries,
   journalEntryTags,
   journalTags,
   type JournalEntry,
   type NewJournalEntry,
   type JournalTag,
-} from "../../storage/database/schema";
-import { db } from "../../storage/database/client";
+} from "@teledrug/db";
 import type { JournalAnalysisResult } from "../journal/model";
 
 export class JournalRepositoryError extends Data.TaggedError("JournalRepositoryError")<{

@@ -5,8 +5,7 @@ import { z } from "zod";
 
 import { authorizedAction } from "@/actions/action-client";
 import type { Task as TaskDto, TasksResponse } from "@/types/api";
-import { db } from "@teledrug/core/storage/database/client";
-import { tasks, type Task } from "@teledrug/core/storage/database/schema";
+import { db, tasks, type Task } from "@teledrug/db";
 
 const serializeTask = (task: Task): TaskDto => ({
   id: task.id,

@@ -1,7 +1,6 @@
 import { Effect, Context, Layer, Option } from "effect"
 import { eq, and } from "drizzle-orm"
-import { db } from "../../storage/database/client"
-import { users, userIntegrations, userSettings } from "../../storage/database/schema"
+import { db, users, userIntegrations, userSettings } from "@teledrug/db"
 import { DigestSettingsRepository } from "./digest-settings"
 import { EncryptionService, type EncryptedData } from "./encryption"
 import {

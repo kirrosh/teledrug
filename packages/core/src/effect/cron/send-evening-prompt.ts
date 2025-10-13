@@ -1,7 +1,6 @@
 import { Effect } from "effect";
 import { eq } from "drizzle-orm";
-import { db, sql } from "../../storage/database/client";
-import { users, userSettings } from "../../storage/database/schema";
+import { db, sql, users, userSettings } from "@teledrug/db";
 
 const TARGET_HOUR = 20;
 

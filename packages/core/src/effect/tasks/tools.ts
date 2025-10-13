@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { ToolResultFormatter } from "../types/integrations";
 import { TaskRepository } from "../services/task-repository";
 import type { TaskRepository as TaskRepositoryService } from "../services/task-repository";
-import type { Task } from "../../storage/database/schema";
+import type { Task } from "@teledrug/db";
 
 const AddTaskSchema = z.object({
   title: z.string().min(1),

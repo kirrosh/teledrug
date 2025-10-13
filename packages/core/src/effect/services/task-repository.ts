@@ -13,8 +13,7 @@ import {
   isNotNull,
   type SQL,
 } from "drizzle-orm";
-import { tasks, type Task, type NewTask } from "../../storage/database/schema";
-import { db } from "../../storage/database/client";
+import { db, tasks, type Task, type NewTask } from "@teledrug/db";
 import { getDayBoundsInTimezone, normalizeTimezone } from "../shared/timezone";
 
 export class TaskRepositoryError extends Data.TaggedError("TaskRepositoryError")<{
