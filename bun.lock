@@ -29,6 +29,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@teledrug/core": "workspace:*",
+        "@teledrug/db": "workspace:*",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
         "iron-session": "^8.0.4",
@@ -55,6 +56,20 @@
         "typescript": "^5",
       },
     },
+    "packages/ai": {
+      "name": "@teledrug/ai",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ai-sdk/openai": "^2.0.32",
+        "@effect/schema": "^0.75.5",
+        "ai": "^5.0.45",
+        "effect": "^3.17.13",
+        "zod": "^4.1.5",
+      },
+      "devDependencies": {
+        "typescript": "5.9.2",
+      },
+    },
     "packages/core": {
       "name": "@teledrug/core",
       "version": "0.1.0",
@@ -63,7 +78,10 @@
         "@effect/platform": "^0.90.10",
         "@effect/platform-node": "^0.96.1",
         "@effect/schema": "^0.75.5",
+        "@teledrug/db": "workspace:*",
+        "@teledrug/encryption": "workspace:*",
         "@teledrug/og": "workspace:*",
+        "@teledrug/timezone": "workspace:*",
         "ai": "^5.0.45",
         "drizzle-orm": "^0.44.5",
         "effect": "^3.17.13",
@@ -77,6 +95,28 @@
         "typescript": "5.9.2",
       },
     },
+    "packages/db": {
+      "name": "@teledrug/db",
+      "version": "0.1.0",
+      "dependencies": {
+        "drizzle-orm": "^0.44.5",
+        "postgres": "^3.4.7",
+      },
+      "devDependencies": {
+        "drizzle-kit": "^0.31.4",
+        "typescript": "5.9.2",
+      },
+    },
+    "packages/encryption": {
+      "name": "@teledrug/encryption",
+      "version": "0.1.0",
+      "dependencies": {
+        "effect": "^3.17.13",
+      },
+      "devDependencies": {
+        "typescript": "5.9.2",
+      },
+    },
     "packages/og": {
       "name": "@teledrug/og",
       "version": "0.1.0",
@@ -84,6 +124,13 @@
         "@vercel/og": "^0.6.2",
         "react": "^18.3.1",
       },
+      "devDependencies": {
+        "typescript": "5.9.2",
+      },
+    },
+    "packages/timezone": {
+      "name": "@teledrug/timezone",
+      "version": "0.1.0",
       "devDependencies": {
         "typescript": "5.9.2",
       },
@@ -410,13 +457,21 @@
 
     "@tailwindcss/postcss": ["@tailwindcss/postcss@4.1.13", "", { "dependencies": { "@alloc/quick-lru": "^5.2.0", "@tailwindcss/node": "4.1.13", "@tailwindcss/oxide": "4.1.13", "postcss": "^8.4.41", "tailwindcss": "4.1.13" } }, "sha512-HLgx6YSFKJT7rJqh9oJs/TkBFhxuMOfUKSBEPYwV+t78POOBsdQ7crhZLzwcH3T0UyUuOzU/GK5pk5eKr3wCiQ=="],
 
+    "@teledrug/ai": ["@teledrug/ai@workspace:packages/ai"],
+
     "@teledrug/bot": ["@teledrug/bot@workspace:apps/bot"],
 
     "@teledrug/core": ["@teledrug/core@workspace:packages/core"],
 
     "@teledrug/daily-greeting": ["@teledrug/daily-greeting@workspace:apps/daily-greeting"],
 
+    "@teledrug/db": ["@teledrug/db@workspace:packages/db"],
+
+    "@teledrug/encryption": ["@teledrug/encryption@workspace:packages/encryption"],
+
     "@teledrug/og": ["@teledrug/og@workspace:packages/og"],
+
+    "@teledrug/timezone": ["@teledrug/timezone@workspace:packages/timezone"],
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.1", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg=="],
 

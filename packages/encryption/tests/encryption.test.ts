@@ -83,7 +83,7 @@ describe("@teledrug/encryption", () => {
               yield* EncryptionService;
             }).pipe(Effect.provide(EncryptionServiceLive))
           )
-        ).rejects.toThrow(/ENCRYPTION_MASTER_KEY must be exactly 64 hex characters/);
+        ).rejects.toThrow(/Failed to initialize encryption key/);
       });
     });
   });

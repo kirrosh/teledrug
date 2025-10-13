@@ -8,6 +8,12 @@ import {
 } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
+import {
+  AIAgentConfigSchema,
+  SimpleChatContextSchema,
+  type AIAgentConfig,
+  type SimpleChatContext,
+} from "@teledrug/ai";
 import { AIAgentError } from "../errors";
 import {
   IntegrationRegistry,
@@ -17,29 +23,6 @@ import {
 } from "./integration-registry";
 import { IntegrationError, ToolResultFormatter } from "../types/integrations";
 import type { ConversationMessage } from "../types";
-
-// AI Agent Configuration Schema
-const AIAgentConfigSchema = Schema.Struct({
-  openaiApiKey: Schema.String,
-  model: Schema.optionalWith(Schema.String, { default: () => "gpt-4o-mini" }),
-  maxTokens: Schema.optionalWith(Schema.Number, { default: () => 1000 }),
-  userId: Schema.Union(Schema.String, Schema.Number),
-});
-
-type AIAgentConfig = Schema.Schema.Type<typeof AIAgentConfigSchema>;
-
-// Simple Chat Context for minimal implementation
-const SimpleChatContextSchema = Schema.Struct({
-  userId: Schema.Union(Schema.String, Schema.Number),
-  chatId: Schema.Union(Schema.String, Schema.Number),
-  messageContent: Schema.String,
-  interactionType: Schema.optionalWith(
-    Schema.Literal("TEXT", "VOICE", "IMAGE", "FORWARD"),
-    { default: () => "TEXT" }
-  ),
-});
-
-type SimpleChatContext = Schema.Schema.Type<typeof SimpleChatContextSchema>;
 
 // Service interface
 export interface AIAgent {

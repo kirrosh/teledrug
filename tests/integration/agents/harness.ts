@@ -1,7 +1,7 @@
 import { describe, test } from "bun:test";
 import type { CoreMessage } from "ai";
 
-import type { SimpleChatContext } from "../../../packages/core/src/effect/services/ai-agent";
+import type { SimpleChatContext } from "@teledrug/ai";
 
 export const RUN_LLM_TESTS = process.env.RUN_LLM_TESTS === "1";
 

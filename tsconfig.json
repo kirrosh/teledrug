@@ -23,6 +23,8 @@
       "@teledrug/db": ["packages/db/src/index.ts"],
       "@teledrug/encryption/*": ["packages/encryption/src/*"],
       "@teledrug/encryption": ["packages/encryption/src/index.ts"],
+      "@teledrug/ai/*": ["packages/ai/src/*"],
+      "@teledrug/ai": ["packages/ai/src/index.ts"],
       "@teledrug/timezone/*": ["packages/timezone/src/*"],
       "@teledrug/timezone": ["packages/timezone/src/index.ts"],
       "@teledrug/og/*": ["packages/og/src/*"],

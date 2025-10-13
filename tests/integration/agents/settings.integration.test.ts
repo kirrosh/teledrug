@@ -3,11 +3,8 @@ import { Effect } from "effect";
 import { tool } from "ai";
 import { z } from "zod";
 
-import {
-  __testInternals,
-  type AIAgentConfig,
-  type SimpleChatContext,
-} from "../../../packages/core/src/effect/services/ai-agent";
+import { __testInternals } from "../../../packages/core/src/effect/services/ai-agent";
+import type { AIAgentConfig, SimpleChatContext } from "@teledrug/ai";
 import type { IntegrationToolsBundle } from "../../../packages/core/src/effect/services/integration-registry";
 import {
   buildSimpleContext,

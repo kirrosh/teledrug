@@ -6,8 +6,8 @@ import { z } from "zod";
 import {
   AIAgent,
   AIAgentLive,
-  type AIAgentConfig,
 } from "../../../packages/core/src/effect/services/ai-agent";
+import type { AIAgentConfig } from "@teledrug/ai";
 import {
   IntegrationRegistry,
   type IntegrationRegistry as IntegrationRegistryService,
