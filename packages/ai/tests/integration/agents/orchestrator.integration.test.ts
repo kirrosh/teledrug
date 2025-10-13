@@ -3,16 +3,14 @@ import { Effect } from "effect";
 import { tool } from "ai";
 import { z } from "zod";
 
-import {
-  AIAgent,
-  AIAgentLive,
-} from "../../../packages/core/src/effect/services/ai-agent";
-import type { AIAgentConfig } from "@teledrug/ai";
+import { AIAgent, AIAgentLive } from "../../../src/agent";
 import {
   IntegrationRegistry,
   type IntegrationRegistry as IntegrationRegistryService,
   type IntegrationToolsBundle,
-} from "../../../packages/core/src/effect/services/integration-registry";
+  type ConversationMessage,
+  type AIAgentConfig,
+} from "@teledrug/ai";
 import {
   buildSimpleContext,
   describeLLM,
@@ -22,7 +20,6 @@ import {
   isNetworkError,
   testLLM,
 } from "./harness";
-import type { ConversationMessage } from "../../../packages/core/src/effect/types";
 
 const ManageTasksSchema = z.object({
   create: z

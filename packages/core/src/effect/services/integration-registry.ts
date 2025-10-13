@@ -1,11 +1,20 @@
-import { Effect, Context, Layer } from "effect";
-import { Tool as AITool } from "ai";
-import type { CoreMessage } from "ai";
+import { Effect, Layer } from "effect";
 import {
   InteractionType,
   IntegrationError,
   ToolResultFormatter,
-} from "../types/integrations";
+  IntegrationRegistry,
+  type DomainIntegrationTools,
+  type DomainAgentType,
+  type IntegrationToolsBundle,
+} from "@teledrug/ai";
+import type { IntegrationRegistry as IntegrationRegistryService } from "@teledrug/ai";
+export type {
+  DomainIntegrationTools,
+  DomainAgentType,
+  IntegrationToolsBundle,
+} from "@teledrug/ai";
+export { IntegrationRegistry } from "@teledrug/ai";
 import {
   YandexCalendarIntegration,
   YandexCredentials,
@@ -19,39 +28,6 @@ import { JournalRepository } from "./journal-repository";
 import { createTaskTools } from "../tasks/tools";
 import { createUserSettingsTools } from "../user/tools";
 import { TaskRepository, TaskRepositoryLive } from "./task-repository";
-
-export interface IntegrationToolsBundle {
-  readonly tools: Record<string, AITool>;
-  readonly formatters: Record<string, ToolResultFormatter>;
-  readonly progressMessages: Record<string, string>;
-  readonly contextMessages?: ReadonlyArray<CoreMessage>;
-}
-
-export type DomainAgentType =
-  | "digest"
-  | "journal"
-  | "tasks"
-  | "calendar"
-  | "settings";
-
-export type DomainIntegrationTools = Partial<
-  Record<DomainAgentType, IntegrationToolsBundle>
->;
-
-export interface IntegrationRegistry {
-  readonly getToolsForUser: (
-    userId: string | number,
-    interactionType: InteractionType
-  ) => Effect.Effect<IntegrationToolsBundle, IntegrationError>;
-  readonly getDomainToolsForUser: (
-    userId: string | number,
-    interactionType: InteractionType
-  ) => Effect.Effect<DomainIntegrationTools, IntegrationError>;
-}
-
-export const IntegrationRegistry = Context.GenericTag<IntegrationRegistry>(
-  "@services/IntegrationRegistry"
-);
 
 const toNumericUserId = (userId: string | number) => {
   if (typeof userId === "number") {
@@ -351,7 +327,7 @@ const makeIntegrationRegistry = Effect.gen(function* () {
   return {
     getToolsForUser,
     getDomainToolsForUser,
-  } satisfies IntegrationRegistry;
+  } satisfies IntegrationRegistryService;
 });
 
 export const IntegrationRegistryLive = Layer.effect(

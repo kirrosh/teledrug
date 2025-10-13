@@ -1,10 +1,17 @@
-# @teledrug/ai (work in progress)
+# @teledrug/ai
 
-This package will host TeleDrug's AI orchestration services, including:
-- Agent orchestration, routing, and history normalization.
-- Domain tool factories and structured output helpers.
-- Shared contracts for tool bundles, messages, and AI errors.
-- Optional harnesses for LLM integration tests.
+Dedicated package for TeleDrug's AI/LLM orchestration.
 
-During the migration phase the module exports only placeholder symbols.
-See `doc/ai-package-extraction.md` for the full extraction plan.
+## What lives here now
+- Agent orchestration service (`AIAgent`, `AIAgentFactory`) with routing, history normalisation, and Effect layers.
+- Shared contracts: configuration schemas, chat context, conversation messages, integration tool bundles, and formatter types.
+- AI-specific error types (`AIAgentError`, `IntegrationError`, etc.).
+- Internal test helpers and LLM harnesses.
+- Unit and integration tests under `tests/` (LLM scenarios gated by `RUN_LLM_TESTS=1`).
+
+## Roadmap
+- Move domain tool factories (journal/tasks/digest/settings/calendar) behind explicit ports.
+- Extract transcription and journal-analysis services from `@teledrug/core`.
+- Reduce Telegram-specific surface in formatter contracts once adapters are in place.
+
+See `doc/ai-package-extraction.md` for detailed migration notes.

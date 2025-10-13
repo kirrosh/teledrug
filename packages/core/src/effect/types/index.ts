@@ -1,5 +1,8 @@
 import { Schema } from "@effect/schema"
-import { Data } from "effect"
+export {
+  ConversationMessageSchema,
+  type ConversationMessage,
+} from "@teledrug/ai"
 
 // Encrypted data schema
 export const EncryptedDataSchema = Schema.Struct({
@@ -10,15 +13,7 @@ export const EncryptedDataSchema = Schema.Struct({
 
 export type EncryptedData = Schema.Schema.Type<typeof EncryptedDataSchema>
 
-// Message schemas
-export const ConversationMessageSchema = Schema.Struct({
-  role: Schema.Literal("user", "assistant"),
-  content: Schema.String,
-  timestamp: Schema.Number,
-})
-
-export type ConversationMessage = Schema.Schema.Type<typeof ConversationMessageSchema>
-
+// Message schemas re-exported from @teledrug/ai
 // Configuration schemas
 export const BotConfigSchema = Schema.Struct({
   telegramToken: Schema.String,

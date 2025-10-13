@@ -1,13 +1,13 @@
 import { describe, it, expect } from "bun:test";
 import { Effect } from "effect";
 
-import { __testInternals } from "../../packages/core/src/effect/services/ai-agent";
+import { __testInternals } from "../../src/agent";
 import type {
   IntegrationToolsBundle,
   DomainIntegrationTools,
   DomainAgentType,
-} from "../../packages/core/src/effect/services/integration-registry";
-import type { ConversationMessage } from "../../packages/core/src/effect/types";
+  ConversationMessage,
+} from "@teledrug/ai";
 
 const {
   executeAgentPlan,
