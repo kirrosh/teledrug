@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import {
   createYandexCalendarTools,
   YandexCredentials,
-} from "../../packages/core/src/effect/integrations/yandex-calendar";
+} from "@teledrug/core/integrations/yandex-calendar";
 
 describe("calendar formatter", () => {
   it("renders create event result with user timezone", async () => {
