@@ -11,7 +11,7 @@ export const EncryptedDataSchema = Schema.Struct({
   tag: Schema.String,
 })
 
-export type EncryptedData = Schema.Schema.Type<typeof EncryptedDataSchema>
+export type EncryptedPayload = Schema.Schema.Type<typeof EncryptedDataSchema>
 
 // Message schemas re-exported from @teledrug/ai
 // Configuration schemas

@@ -1,7 +1,4 @@
-export {
-  AIAgentConfigSchema,
-  type AIAgentConfig,
-} from "./contracts/config";
+export { AIAgentConfigSchema, type AIAgentConfig } from "./contracts/config";
 export {
   SimpleChatContextSchema,
   type SimpleChatContext,
@@ -11,15 +8,10 @@ export {
   type ConversationMessage,
 } from "./contracts/messages";
 export {
-  InteractionType,
   type InteractionType,
-  ToolMetadata,
   type ToolMetadata,
-  IntegrationConfig,
   type IntegrationConfig,
-  ToolResult,
   type ToolResult,
-  ProgressStep,
   type ProgressStep,
   IntegrationError,
   ToolError,
@@ -32,18 +24,21 @@ export {
   type DomainAgentType,
   type DomainIntegrationTools,
   IntegrationRegistry,
-  type IntegrationRegistry,
 } from "./contracts/integration";
-export type { IntegrationCredentials } from "./contracts/integration";
+export type {
+  IntegrationCredentials,
+  IntegrationRegistry as IntegrationRegistryService,
+} from "./contracts/integration";
 export { AIAgentError } from "./errors";
 export {
   AIAgent,
   AIAgentFactory,
   AIAgentFactoryLive,
   AIAgentLive,
-  type AIAgentResponse,
-  type AIAgentFactory,
-  type AgentPlanEntry,
-  type AgentExecution,
   __testInternals,
+} from "./agent";
+export type {
+  AIAgentResponse,
+  AgentPlanEntry,
+  AgentExecution,
 } from "./agent";

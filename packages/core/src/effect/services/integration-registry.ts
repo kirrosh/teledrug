@@ -142,6 +142,8 @@ const makeIntegrationRegistry = Effect.gen(function* () {
           Effect.map((settings) => ({
             timezone: settings.timezone ?? "UTC",
             locale: settings.locale ?? "ru-RU",
+            city: settings.city ?? null,
+            country: settings.country ?? null,
           })),
           Effect.catchAll((cause) =>
             Effect.sync(() => {
@@ -149,7 +151,12 @@ const makeIntegrationRegistry = Effect.gen(function* () {
                 `⚠️ Registry: failed to load user settings for user ${numericUserId}, using defaults`,
                 cause
               );
-              return { timezone: "UTC", locale: "ru-RU" } as const;
+              return {
+                timezone: "UTC",
+                locale: "ru-RU",
+                city: null,
+                country: null,
+              } as const;
             })
           )
         );

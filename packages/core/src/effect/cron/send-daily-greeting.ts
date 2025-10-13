@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { db, sql, users, userSettings } from "@teledrug/db";
 import { eq } from "drizzle-orm";
 import { runDailyDigest } from "../digest/runner";
-import { DailyDigestLayer } from "../layers/daily-digest";
+import { DailyDigestLayer, type DailyDigestEnv } from "../layers/daily-digest";
 import type {
   DigestModuleId,
   DigestModuleResult,
@@ -230,7 +230,7 @@ const composeDigest = (userId: number, date: Date) =>
       message,
       imagePayload: buildImagePayload(cards, date, settings),
     } satisfies DigestComposition;
-  }).pipe(Effect.provide(DailyDigestLayer));
+  });
 
 const fetchRecipients = (now: Date, forceAll: boolean) =>
   Effect.tryPromise(async () => {
@@ -441,7 +441,11 @@ const program = Effect.scoped(
                 );
                 return {
                   message: `${greetingPrefix}\n\nХорошего дня!`,
-                  imagePayload: buildImagePayload([], today),
+                  imagePayload: buildImagePayload(
+                    [],
+                    today,
+                    toUserSettingsSnapshot(null)
+                  ),
                 } satisfies DigestComposition;
               })
             )
@@ -461,7 +465,11 @@ const program = Effect.scoped(
   })
 );
 
-Effect.runPromise(program)
+const runnableProgram = program.pipe(
+  Effect.provide(DailyDigestLayer)
+) as Effect.Effect<void, unknown, never>;
+
+Effect.runPromise(runnableProgram)
   .catch((error) => {
     console.error("❌ Daily digest job failed:", error);
     process.exitCode = 1;

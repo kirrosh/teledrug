@@ -54,7 +54,7 @@ export const AIAgent = Context.GenericTag<AIAgent>("@services/AIAgent");
 
 type AgentExecutionKind = DomainAgentType;
 
-interface AgentExecution {
+export interface AgentExecution {
   readonly kind: AgentExecutionKind;
   readonly result: GenerateTextResult<any, any>;
   readonly toolFormatters: Record<string, ToolResultFormatter>;
@@ -79,7 +79,7 @@ const DEFAULT_AGENT_FALLBACK_ORDER: readonly DomainAgentType[] = [
 
 const HISTORY_REPLAY_LIMIT = 10;
 
-interface AgentPlanEntry {
+export interface AgentPlanEntry {
   readonly kind: DomainAgentType;
   readonly executed: boolean;
   readonly reason?: string;
@@ -597,7 +597,7 @@ const runDomainAgent = (
             tools: bundle.tools,
             toolChoice:
               toolNames.length === 1
-                ? { type: "tool", toolName: toolNames[0] }
+                ? { type: "tool", toolName: toolNames[0]! }
                 : "required",
           }
         : {}),

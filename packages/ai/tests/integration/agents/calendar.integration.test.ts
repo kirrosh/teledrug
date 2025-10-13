@@ -101,11 +101,15 @@ describeLLM("Calendar agent", () => {
 
     const execution = outcome.execution;
 
-      expect(execution.result.toolCalls?.[0]?.toolName).toBe("createCalendarEvent");
-      expect(execution.result.toolResults?.[0]?.toolName).toBe("createCalendarEvent");
-      expect(captured).toHaveLength(1);
-      const payload = captured[0];
-      expect(payload.title.toLowerCase()).toContain("встреч");
+    expect(execution.result.toolCalls?.[0]?.toolName).toBe(
+      "createCalendarEvent"
+    );
+    expect(execution.result.toolResults?.[0]?.toolName).toBe(
+      "createCalendarEvent"
+    );
+    expect(captured).toHaveLength(1);
+    const payload = captured[0]!;
+    expect(payload.title.toLowerCase()).toContain("встреч");
     expect(new Date(payload.start).getTime()).not.toBeNaN();
     expect(new Date(payload.end).getTime()).not.toBeNaN();
     },

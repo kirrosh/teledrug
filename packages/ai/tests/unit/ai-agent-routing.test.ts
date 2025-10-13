@@ -7,6 +7,7 @@ import type {
   DomainIntegrationTools,
   DomainAgentType,
   ConversationMessage,
+  AgentExecution,
 } from "@teledrug/ai";
 
 const {
@@ -61,7 +62,7 @@ describe("executeAgentPlan", () => {
         },
         toolFormatters: {},
         toolProgressMessages: {},
-      });
+      } as unknown as AgentExecution);
     };
 
     const { agentPlan, successfulExecutions } = await Effect.runPromise(
@@ -80,9 +81,11 @@ describe("executeAgentPlan", () => {
       "journal",
       "tasks",
     ]);
-    expect(agentPlan[0].executed).toBeFalse();
-    expect(agentPlan[0].reason).toBe("no tool results");
-    expect(agentPlan[1].executed).toBeTrue();
+    const firstEntry = agentPlan[0]!;
+    expect(firstEntry.executed).toBeFalse();
+    expect(firstEntry.reason).toBe("no tool results");
+    const secondEntry = agentPlan[1]!;
+    expect(secondEntry.executed).toBeTrue();
   });
 
   it("executes every agent when short-circuit disabled", async () => {
@@ -111,7 +114,7 @@ describe("executeAgentPlan", () => {
         },
         toolFormatters: {},
         toolProgressMessages: {},
-      });
+      } as unknown as AgentExecution);
     };
 
     const { agentPlan, successfulExecutions } = await Effect.runPromise(

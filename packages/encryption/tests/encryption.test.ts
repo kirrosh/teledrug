@@ -3,12 +3,13 @@ import { Effect } from "effect";
 import {
   EncryptionService,
   EncryptionServiceLive,
-  CryptographyService,
+  CryptographyService as CryptographyServiceTag,
   CryptographyServiceLive,
   CryptographyError,
   EncryptionError,
   DecryptionError,
 } from "../src";
+import type { CryptographyService as CryptographyServiceApi } from "../src";
 
 const withEnv = async <T>(
   key: string,
@@ -90,31 +91,43 @@ describe("@teledrug/encryption", () => {
 
   describe("CryptographyService", () => {
     const withService = <A>(
-      effect: Effect.Effect<A, CryptographyError>
+      effect: Effect.Effect<A, CryptographyError, typeof CryptographyServiceTag>
     ): Promise<A> =>
       withTestConfig(validKey, () =>
-        Effect.runPromise(effect.pipe(Effect.provide(CryptographyServiceLive)))
+        Effect.runPromise(
+          effect.pipe(Effect.provide(CryptographyServiceLive)) as Effect.Effect<
+            A,
+            CryptographyError,
+            never
+          >
+        )
+      );
+
+    const useCryptography = <A>(
+      handler: (
+        service: CryptographyServiceApi
+      ) => Effect.Effect<A, CryptographyError>
+    ) =>
+      withService(
+        Effect.gen(function* () {
+          const service = yield* CryptographyServiceTag;
+          return yield* handler(service);
+        }) as unknown as Effect.Effect<
+          A,
+          CryptographyError,
+          typeof CryptographyServiceTag
+        >
       );
 
     it("encrypts and decrypts plain text", async () => {
-      const encrypted = await withService(
-        Effect.gen(function* () {
-          const service = yield* CryptographyService;
-          return yield* service.encrypt("Hello");
-        })
+      const encrypted = await useCryptography((service) =>
+        service.encrypt("Hello")
       );
 
       expect(encrypted.encrypted).not.toBe("Hello");
 
-      const decrypted = await withService(
-        Effect.gen(function* () {
-          const service = yield* CryptographyService;
-          return yield* service.decrypt(
-            encrypted.encrypted,
-            encrypted.iv,
-            encrypted.tag
-          );
-        })
+      const decrypted = await useCryptography((service) =>
+        service.decrypt(encrypted.encrypted, encrypted.iv, encrypted.tag)
       );
 
       expect(decrypted).toBe("Hello");
@@ -123,45 +136,25 @@ describe("@teledrug/encryption", () => {
     it("encrypts and decrypts JSON objects", async () => {
       const payload = { modules: ["calendar", "tasks"] };
 
-      const encrypted = await withService(
-        Effect.gen(function* () {
-          const service = yield* CryptographyService;
-          return yield* service.encryptJson(payload);
-        })
+      const encrypted = await useCryptography((service) =>
+        service.encryptJson(payload)
       );
 
-      const decrypted = await withService(
-        Effect.gen(function* () {
-          const service = yield* CryptographyService;
-          return yield* service.decryptJson(
-            encrypted.encrypted,
-            encrypted.iv,
-            encrypted.tag
-          );
-        })
+      const decrypted = await useCryptography((service) =>
+        service.decryptJson(encrypted.encrypted, encrypted.iv, encrypted.tag)
       );
 
       expect(decrypted).toEqual(payload);
     });
 
     it("fails when decrypting with wrong tag", async () => {
-      const encrypted = await withService(
-        Effect.gen(function* () {
-          const service = yield* CryptographyService;
-          return yield* service.encrypt("Hello");
-        })
+      const encrypted = await useCryptography((service) =>
+        service.encrypt("Hello")
       );
 
       await expect(
-        withService(
-          Effect.gen(function* () {
-            const service = yield* CryptographyService;
-            return yield* service.decrypt(
-              encrypted.encrypted,
-              encrypted.iv,
-              "0".repeat(32)
-            );
-          })
+        useCryptography((service) =>
+          service.decrypt(encrypted.encrypted, encrypted.iv, "0".repeat(32))
         )
       ).rejects.toThrow(/Failed to decrypt data/);
     });

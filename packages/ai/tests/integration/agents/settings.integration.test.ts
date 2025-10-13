@@ -107,7 +107,7 @@ describeLLM("Settings agent", () => {
     expect(execution.result.toolCalls?.[0]?.toolName).toBe("updateUserSettings");
     expect(execution.result.toolResults?.[0]?.toolName).toBe("updateUserSettings");
     expect(captured).toHaveLength(1);
-    const payload = captured[0];
+    const payload = captured[0]!;
     expect(payload.city?.toLowerCase()).toContain("нижний");
     expect(payload.timezone).toMatch(/\bGMT\+3\b|Europe\/Moscow/i);
     expect(payload.refreshWeather).toBeTrue();

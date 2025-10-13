@@ -1,5 +1,4 @@
 import { Effect } from "effect";
-import type { DigestModuleImpl, DigestModuleResult } from "./types";
 import {
   WeatherDigestModule,
   FxDigestModule,

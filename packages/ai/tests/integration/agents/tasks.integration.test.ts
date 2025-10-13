@@ -153,7 +153,7 @@ describeLLM("Tasks agent", () => {
     expect(execution.result.toolCalls?.[0]?.toolName).toBe("manageTasks");
     expect(execution.result.toolResults?.[0]?.toolName).toBe("manageTasks");
     expect(captured).toHaveLength(1);
-    const payload = captured[0];
+    const payload = captured[0]!;
     expect(payload.create.length).toBeGreaterThan(0);
     const modifications =
       payload.reschedule.length + payload.update.length + payload.complete.length;

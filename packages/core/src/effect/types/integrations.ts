@@ -1,20 +1,18 @@
 export {
   InteractionType,
-  type InteractionType,
   ToolMetadata,
-  type ToolMetadata,
   IntegrationConfig,
-  type IntegrationConfig,
   ToolResult,
-  type ToolResult,
   ProgressStep,
-  type ProgressStep,
   IntegrationError,
   ToolError,
   MetadataError,
   AuthError,
   FormatError,
-  type ToolFormatterResult,
-  type ToolResultFormatter,
-  type IntegrationCredentials,
+} from "@teledrug/ai";
+
+export type {
+  ToolFormatterResult,
+  ToolResultFormatter,
+  IntegrationCredentials,
 } from "@teledrug/ai";

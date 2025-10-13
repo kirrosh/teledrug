@@ -107,7 +107,7 @@ describeLLM("Journal agent", () => {
     expect(execution.result.toolCalls?.[0]?.toolName).toBe("createJournalEntry");
     expect(execution.result.toolResults?.[0]?.toolName).toBe("createJournalEntry");
     expect(capturedInputs).toHaveLength(1);
-    const payload = capturedInputs[0];
+    const payload = capturedInputs[0]!;
     expect(payload.content.toLowerCase()).toContain("вдох");
     expect(payload.mood.toLowerCase()).toContain("вдох");
     },

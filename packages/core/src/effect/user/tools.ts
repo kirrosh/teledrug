@@ -175,7 +175,14 @@ const resolveTimezone = (
 
   const offsetMatch = normalized.match(/(?:utc|gmt)?\s*([+-]\d{1,2})/);
   if (offsetMatch) {
-    const offset = Number.parseInt(offsetMatch[1], 10);
+    const offsetRaw = offsetMatch[1];
+    if (!offsetRaw) {
+      return {
+        ok: false,
+        reason: `Не удалось распознать часовой пояс «${trimmed}»`,
+      };
+    }
+    const offset = Number.parseInt(offsetRaw, 10);
     if (!Number.isNaN(offset) && offset >= -12 && offset <= 14) {
       const timezone = `Etc/GMT${offset > 0 ? `-${offset}` : `+${Math.abs(offset)}`}`;
       if (isValidTimezone(timezone)) {

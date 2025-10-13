@@ -32,5 +32,7 @@
       "@apps/bot/*": ["apps/bot/src/*"],
       "@apps/daily-greeting/*": ["apps/daily-greeting/src/*"]
     }
-  }
+  },
+  "include": [],
+  "exclude": ["apps/miniapp"]
 }

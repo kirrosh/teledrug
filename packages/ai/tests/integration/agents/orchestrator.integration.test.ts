@@ -10,6 +10,7 @@ import {
   type IntegrationToolsBundle,
   type ConversationMessage,
   type AIAgentConfig,
+  IntegrationError,
 } from "@teledrug/ai";
 import {
   buildSimpleContext,
@@ -153,7 +154,8 @@ describeLLM("Orchestrator", () => {
       };
 
       const registry: IntegrationRegistryService = {
-        getToolsForUser: () => Effect.fail(new Error("not implemented")),
+        getToolsForUser: () =>
+          Effect.fail(new IntegrationError({ message: "not implemented" })),
         getDomainToolsForUser: () =>
           Effect.succeed({
             journal: journalBundle,
@@ -207,9 +209,9 @@ describeLLM("Orchestrator", () => {
       expect(executedKinds).toContain("tasks");
       expect(journalCalls.length).toBeGreaterThan(0);
       expect(tasksCalls.length).toBeGreaterThan(0);
-      const journalPayload = journalCalls[0];
+      const journalPayload = journalCalls[0]!;
       expect(journalPayload.content.toLowerCase()).toContain("трев");
-      const tasksPayload = tasksCalls[0];
+      const tasksPayload = tasksCalls[0]!;
       expect(tasksPayload.create.length).toBeGreaterThan(0);
     },
     { timeout: 30000, skip: true }
@@ -379,7 +381,8 @@ describeLLM("Orchestrator", () => {
       };
 
       const registry: IntegrationRegistryService = {
-        getToolsForUser: () => Effect.fail(new Error("not implemented")),
+        getToolsForUser: () =>
+          Effect.fail(new IntegrationError({ message: "not implemented" })),
         getDomainToolsForUser: () =>
           Effect.succeed({
             journal: journalBundle,
@@ -438,7 +441,7 @@ describeLLM("Orchestrator", () => {
       expect(executedKinds).not.toContain("settings");
 
       expect(journalCalls.length).toBeGreaterThan(0);
-      const journalPayload = journalCalls[0];
+      const journalPayload = journalCalls[0]!;
       expect(journalPayload).toBeDefined();
       if (!journalPayload) {
         throw new Error("Journal payload is undefined");
@@ -447,7 +450,7 @@ describeLLM("Orchestrator", () => {
       expect(journalPayload.content.toLowerCase()).toContain("дубае");
 
       expect(calendarCalls.length).toBeGreaterThan(0);
-      const calendarPayload = calendarCalls[0];
+      const calendarPayload = calendarCalls[0]!;
       expect(calendarPayload).toBeDefined();
       if (!calendarPayload) {
         throw new Error("Calendar payload is undefined");
@@ -561,7 +564,8 @@ describeLLM("Orchestrator", () => {
       };
 
       const registry: IntegrationRegistryService = {
-        getToolsForUser: () => Effect.fail(new Error("not implemented")),
+        getToolsForUser: () =>
+          Effect.fail(new IntegrationError({ message: "not implemented" })),
         getDomainToolsForUser: () =>
           Effect.succeed({
             tasks: tasksBundle,
@@ -617,15 +621,15 @@ describeLLM("Orchestrator", () => {
       expect(executedKinds).toContain("calendar");
 
       expect(tasksCalls.length).toBeGreaterThan(0);
-      const tasksPayload = tasksCalls[0];
+      const tasksPayload = tasksCalls[0]!;
       expect(tasksPayload.complete.length).toBeGreaterThan(0);
-      const completed = tasksPayload.complete[0];
+      const completed = tasksPayload.complete[0]!;
       expect(
         (completed?.title ?? "").toLowerCase().includes("чист")
       ).toBeTrue();
 
       expect(calendarCalls).toHaveLength(1);
-      const calendarPayload = calendarCalls[0];
+      const calendarPayload = calendarCalls[0]!;
       expect(calendarPayload.summary.toLowerCase()).toContain("чист");
       expect(Number.isNaN(Date.parse(calendarPayload.startDate))).toBeFalse();
     },
