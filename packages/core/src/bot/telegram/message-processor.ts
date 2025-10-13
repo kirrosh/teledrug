@@ -7,6 +7,7 @@ import { ToolProgressReporter } from "../../core/tool-progress";
 import type {
   ToolFormatterResult,
   ToolResultFormatter,
+  InteractionType,
 } from "../../types/integrations";
 import type { MessageHistory } from "../../services/message-history";
 import type { AIAgentFactory } from "../../services/ai-agent";
@@ -20,7 +21,7 @@ interface AggregatedToolResponse {
 }
 
 export interface HandleUserMessageOptions {
-  readonly interactionType?: "TEXT" | "VOICE";
+  readonly interactionType?: InteractionType;
   readonly progressMessageId?: number;
   readonly initialProgressText?: string;
 }
@@ -129,15 +130,37 @@ export const createMessageProcessor = ({
 
     const chatId = ctx.chat.id;
     const userId = ctx.from?.id || chatId;
-    const interactionType =
-      options.interactionType === "VOICE" ? "VOICE" : "TEXT";
+    const interactionType: InteractionType =
+      options.interactionType ?? "TEXT";
     const initialProgressText =
       options.initialProgressText ?? "🤔 Думаю над ответом...";
 
     const preview = createPreview(text);
-    const interactionLabel =
-      interactionType === "VOICE" ? "голосовое" : "текстовое";
-    const interactionEmoji = interactionType === "VOICE" ? "🎙️" : "📨";
+    const interactionLabel = (() => {
+      switch (interactionType) {
+        case "VOICE":
+          return "голосовое";
+        case "IMAGE":
+          return "изображение";
+        case "FORWARD":
+          return "пересланное сообщение";
+        default:
+          return "текстовое";
+      }
+    })();
+
+    const interactionEmoji = (() => {
+      switch (interactionType) {
+        case "VOICE":
+          return "🎙️";
+        case "IMAGE":
+          return "🖼️";
+        case "FORWARD":
+          return "🔁";
+        default:
+          return "📨";
+      }
+    })();
 
     console.log(
       `${interactionEmoji} Получено ${interactionLabel} сообщение от ${userId}: ${preview}`

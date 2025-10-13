@@ -10,6 +10,7 @@ import { TaskRepository } from "../../services/task-repository";
 import type { BotConfig, UpdateContext } from "../../types";
 import { createMessageProcessor } from "./message-processor";
 import { createAudioTranscriber } from "./audio-transcriber";
+import { createImageAnalyzer } from "./image-analyzer";
 import { registerCommandHandlers } from "./handlers/commands";
 import { registerCallbackHandlers } from "./handlers/callbacks";
 import { registerMessageHandlers } from "./handlers/messages";
@@ -118,6 +119,7 @@ const makeTelegramClient = (config: BotConfig) =>
     });
 
     const audioTranscriber = createAudioTranscriber(config.telegramToken);
+    const imageAnalyzer = createImageAnalyzer(config.telegramToken);
 
     registerCommandHandlers(bot, userConfigStorage, {
       resolvedWebAppUrl,
@@ -125,7 +127,7 @@ const makeTelegramClient = (config: BotConfig) =>
     });
 
     registerCallbackHandlers(bot, journalRepository, taskRepository);
-    registerMessageHandlers(bot, messageProcessor, audioTranscriber);
+    registerMessageHandlers(bot, messageProcessor, audioTranscriber, imageAnalyzer);
 
     const start = Effect.gen(function* () {
       try {

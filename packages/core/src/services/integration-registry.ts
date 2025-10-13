@@ -234,7 +234,11 @@ const makeIntegrationRegistry = Effect.gen(function* () {
 
         switch (integration.integrationType) {
           case "YandexCalendar": {
-            if (interactionType !== "TEXT" && interactionType !== "VOICE") {
+            if (
+              interactionType !== "TEXT" &&
+              interactionType !== "VOICE" &&
+              interactionType !== "IMAGE"
+            ) {
               yield* Effect.sync(() =>
                 console.log(
                   `⚖️ Registry: skipping YandexCalendar tools for unsupported interaction type ${interactionType}`

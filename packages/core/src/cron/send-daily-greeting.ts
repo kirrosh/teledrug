@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { db, sql, users, userSettings } from "@teledrug/db";
 import { eq } from "drizzle-orm";
 import { runDailyDigest } from "../digest/runner";
-import { DailyDigestLayer, type DailyDigestEnv } from "../layers/daily-digest";
+import { DailyDigestLayer, type DailyDigestEnv } from "../app/layers/daily-digest";
 import type {
   DigestModuleId,
   DigestModuleResult,
