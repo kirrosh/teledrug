@@ -8,6 +8,7 @@ import {
   moodSchema,
   sanitizeTitle,
 } from "../journal/model";
+import { getMainModel } from "../config/ai-models";
 
 const ANALYSIS_PROMPT = `Ты помощник, который анализирует дневниковые записи.\n\nТебе нужно определить настроение и уровень энергии автора по тексту записи.\nИспользуй только следующие значения настроения: very_negative, negative, neutral, positive, very_positive, mixed.\nИспользуй только следующие значения энергии: very_low, low, medium, high, very_high.\nТакже подбери короткий заголовок для записи — не более трёх слов. Заголовок должен быть на языке записи.\n\nОтветь строго JSON-объектом формата:\n{"title": string, "mood": string, "energy": string, "tags": string[]}\nГде "tags" — массив существительных или коротких фраз из текста, которые могут использоваться как теги (если сомневаешься — верни пустой массив).\nНикаких пояснений, markdown или дополнительного текста — только JSON.`;
 
@@ -49,7 +50,7 @@ export const JournalAnalysisService =
   );
 
 const makeJournalAnalysisService = Effect.gen(function* () {
-  const model = openai("gpt-4o-mini");
+  const model = openai(getMainModel());
 
   const analyze: JournalAnalysisService["analyze"] = ({ content }) =>
     Effect.gen(function* () {

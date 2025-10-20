@@ -8,6 +8,7 @@ import type { ToolResultFormatter } from "../types/integrations";
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { TaskRepository } from "../services/task-repository";
+import { getMainModel } from "../config/ai-models";
 
 const CreateJournalEntrySchema = z.object({
   content: z.string().min(1, "Текст записи не может быть пустым"),
@@ -147,7 +148,7 @@ export const createJournalTools = (userId: number) =>
     const repository = yield* JournalRepository;
     const tasksRepo = yield* TaskRepository;
 
-    const model = openai("gpt-4o-mini");
+    const model = openai(getMainModel());
 
     const extractTasksAI = (
       content: string,

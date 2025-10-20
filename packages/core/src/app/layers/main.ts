@@ -12,6 +12,7 @@ import { JournalAnalysisServiceLive } from "../../services/journal-analysis";
 import { JournalRepositoryLive } from "../../services/journal-repository";
 import { TaskRepositoryLive } from "../../services/task-repository";
 import type { BotConfig } from "../../types";
+import { getMainModel } from "../../config/ai-models";
 
 // Create main application layer
 export const createMainLayer = (
@@ -54,7 +55,7 @@ export const createMainLayer = (
   const aiAgent = pipe(
     AIAgentFactoryLive({
       openaiApiKey: config.openaiApiKey,
-      model: "gpt-4o-mini",
+      model: getMainModel(),
       maxTokens: 3000,
       userId: "default",
     }),

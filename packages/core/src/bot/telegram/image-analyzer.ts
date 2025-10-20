@@ -8,6 +8,7 @@ import * as HttpClientResponse from "@effect/platform/HttpClientResponse";
 import * as Headers from "@effect/platform/Headers";
 import { generateText } from "ai";
 import { openai } from "@ai-sdk/openai";
+import { getMainModel } from "../../config/ai-models";
 
 const toError = (cause: unknown, fallback: string) =>
   cause instanceof Error ? cause : new Error(`${fallback}: ${String(cause)}`);
@@ -77,7 +78,7 @@ export const createImageAnalyzer =
 
       const analysis = yield* Effect.tryPromise({
         try: async () => {
-          const model = openai("gpt-4o-mini");
+          const model = openai(getMainModel());
           const result = await generateText({
             model,
             messages: [
