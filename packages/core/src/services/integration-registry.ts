@@ -2,18 +2,11 @@ import { Effect, Layer } from "effect";
 import {
   InteractionType,
   IntegrationError,
-  ToolResultFormatter,
   IntegrationRegistry,
-  type DomainIntegrationTools,
-  type DomainAgentType,
   type IntegrationToolsBundle,
 } from "@teledrug/ai";
 import type { IntegrationRegistry as IntegrationRegistryService } from "@teledrug/ai";
-export type {
-  DomainIntegrationTools,
-  DomainAgentType,
-  IntegrationToolsBundle,
-} from "@teledrug/ai";
+export type { IntegrationToolsBundle } from "@teledrug/ai";
 export { IntegrationRegistry } from "@teledrug/ai";
 import {
   YandexCalendarIntegration,
@@ -22,12 +15,10 @@ import {
 import { UserRepository } from "./user-repository";
 import { createDigestTools } from "../digest/tools";
 import { DigestSettingsRepository } from "./digest-settings";
-import { createJournalTools } from "../journal/tools";
-import { JournalAnalysisService } from "./journal-analysis";
-import { JournalRepository } from "./journal-repository";
 import { createTaskTools } from "../tasks/tools";
 import { createUserSettingsTools } from "../user/tools";
 import { TaskRepository, TaskRepositoryLive } from "./task-repository";
+import { CalendarSyncServiceLive } from "./calendar-sync";
 
 const toNumericUserId = (userId: string | number) => {
   if (typeof userId === "number") {
@@ -80,16 +71,14 @@ const mergeBundles = (
 const makeIntegrationRegistry = Effect.gen(function* () {
   const userRepository = yield* UserRepository;
   const digestSettings = yield* DigestSettingsRepository;
-  const journalAnalysis = yield* JournalAnalysisService;
-  const journalRepository = yield* JournalRepository;
   // TaskRepository is lightweight; we'll provide its live layer on demand
 
   yield* Effect.sync(() => console.log("🔧 Initializing Integration Registry..."));
 
-  const prepareBundles = (
+  const getToolsForUser = (
     userId: string | number,
     interactionType: InteractionType
-  ) =>
+  ): Effect.Effect<IntegrationToolsBundle, IntegrationError> =>
     Effect.gen(function* () {
       const numericUserId = yield* Effect.try({
         try: () => toNumericUserId(userId),
@@ -106,7 +95,11 @@ const makeIntegrationRegistry = Effect.gen(function* () {
         )
       );
 
-      const domainBundles: DomainIntegrationTools = {};
+      let combined: IntegrationToolsBundle = {
+        tools: {},
+        formatters: {},
+        progressMessages: {},
+      };
 
       const digestToolsBundle = yield* createDigestTools(numericUserId).pipe(
         Effect.provideService(DigestSettingsRepository, digestSettings),
@@ -119,22 +112,7 @@ const makeIntegrationRegistry = Effect.gen(function* () {
         )
       );
 
-      domainBundles.digest = digestToolsBundle;
-
-      const journalToolsBundle = yield* createJournalTools(numericUserId).pipe(
-        Effect.provideService(JournalAnalysisService, journalAnalysis),
-        Effect.provideService(JournalRepository, journalRepository),
-        Effect.provide(TaskRepositoryLive),
-        Effect.mapError(
-          (cause) =>
-            new IntegrationError({
-              message: "Failed to prepare journal tools",
-              cause,
-            })
-        )
-      );
-
-      domainBundles.journal = journalToolsBundle;
+      combined = mergeBundles(combined, digestToolsBundle);
 
       const userSettings = yield* userRepository
         .getUserSettings(numericUserId)
@@ -161,10 +139,16 @@ const makeIntegrationRegistry = Effect.gen(function* () {
           )
         );
 
+      // Create CalendarSyncService layer with UserRepository
+      const calendarSyncLayer = CalendarSyncServiceLive.pipe(
+        Layer.provide(Layer.succeed(UserRepository, userRepository))
+      );
+
       const taskToolsBundle = yield* createTaskTools(numericUserId, {
         userSettings,
       }).pipe(
         Effect.provide(TaskRepositoryLive),
+        Effect.provide(calendarSyncLayer),
         Effect.mapError(
           (cause) =>
             new IntegrationError({
@@ -174,7 +158,7 @@ const makeIntegrationRegistry = Effect.gen(function* () {
         )
       );
 
-      domainBundles.tasks = taskToolsBundle;
+      combined = mergeBundles(combined, taskToolsBundle);
 
       const settingsToolsBundle = yield* createUserSettingsTools(
         numericUserId,
@@ -198,7 +182,7 @@ const makeIntegrationRegistry = Effect.gen(function* () {
         )
       );
 
-      domainBundles.settings = settingsToolsBundle;
+      combined = mergeBundles(combined, settingsToolsBundle);
 
       const integrations = yield* userRepository
         .getAllDecryptedIntegrations(numericUserId)
@@ -211,8 +195,6 @@ const makeIntegrationRegistry = Effect.gen(function* () {
               })
           )
         );
-
-      let calendarBundle: IntegrationToolsBundle | undefined;
 
       if (integrations.length === 0) {
         yield* Effect.sync(() =>
@@ -234,45 +216,11 @@ const makeIntegrationRegistry = Effect.gen(function* () {
 
         switch (integration.integrationType) {
           case "YandexCalendar": {
-            if (
-              interactionType !== "TEXT" &&
-              interactionType !== "VOICE" &&
-              interactionType !== "IMAGE"
-            ) {
-              yield* Effect.sync(() =>
-                console.log(
-                  `⚖️ Registry: skipping YandexCalendar tools for unsupported interaction type ${interactionType}`
-                )
-              );
-              break;
-            }
-
-            const yandexTools = YandexCalendarIntegration.createTools({
-              credentials: credentials as YandexCredentials,
-              encryptedCredentials: {
-                encrypted: integration.credentialsEncrypted,
-                iv: integration.credentialsIv,
-                tag: integration.credentialsTag,
-              },
-              userTimezone: userSettings.timezone,
-              userLocale: userSettings.locale,
-            });
-
-            calendarBundle = mergeBundles(calendarBundle, {
-              tools: { ...yandexTools.tools },
-              formatters: { ...yandexTools.formatters },
-              progressMessages: {
-                ...(yandexTools.progressMessages ?? {}),
-              },
-              ...(yandexTools.contextMessages
-                ? { contextMessages: [...yandexTools.contextMessages] }
-                : {}),
-            });
+            // Яндекс.Календарь работает в фоновом режиме, инструменты не предоставляются LLM
+            // Синхронизация происходит автоматически при создании событий через manageTasks
             yield* Effect.sync(() =>
               console.log(
-                `✅ Registry: added ${
-                  Object.keys(yandexTools.tools).length
-                } YandexCalendar tool(s)`
+                `📅 Registry: YandexCalendar integration enabled for user ${numericUserId} (background sync only, no LLM tools)`
               )
             );
             break;
@@ -287,27 +235,6 @@ const makeIntegrationRegistry = Effect.gen(function* () {
         }
       }
 
-      if (calendarBundle) {
-        domainBundles.calendar = calendarBundle;
-      }
-
-      const nonEmptyDomainBundles = Object.fromEntries(
-        Object.entries(domainBundles).filter(([, bundle]) =>
-          bundle ? Object.keys(bundle.tools).length > 0 : false
-        )
-      ) as DomainIntegrationTools;
-
-      const combined = Object.values(nonEmptyDomainBundles).reduce<
-        IntegrationToolsBundle
-      >(
-        (acc, bundle) => mergeBundles(acc, bundle),
-        {
-          tools: {},
-          formatters: {},
-          progressMessages: {},
-        }
-      );
-
       yield* Effect.sync(() =>
         console.log(
           `✅ Registry: prepared ${
@@ -316,28 +243,11 @@ const makeIntegrationRegistry = Effect.gen(function* () {
         )
       );
 
-      return { combined, domains: nonEmptyDomainBundles } as const;
+      return combined;
     });
-
-  const getToolsForUser = (
-    userId: string | number,
-    interactionType: InteractionType
-  ): Effect.Effect<IntegrationToolsBundle, IntegrationError> =>
-    prepareBundles(userId, interactionType).pipe(
-      Effect.map(({ combined }) => combined)
-    );
-
-  const getDomainToolsForUser = (
-    userId: string | number,
-    interactionType: InteractionType
-  ): Effect.Effect<DomainIntegrationTools, IntegrationError> =>
-    prepareBundles(userId, interactionType).pipe(
-      Effect.map(({ domains }) => domains)
-    );
 
   return {
     getToolsForUser,
-    getDomainToolsForUser,
   } satisfies IntegrationRegistryService;
 });
 

@@ -10,40 +10,28 @@ import type {
 } from "../digest/types";
 import {
   renderDailyDigestImage,
-  type DailyDigestCard,
   type DailyDigestImagePayload,
 } from "@teledrug/og";
 import { UserRepository } from "../services/user-repository";
-import { normalizeTimezone } from "@teledrug/timezone";
+import { TaskRepository } from "../services/task-repository";
+import { normalizeTimezone, getDayBoundsInTimezone } from "@teledrug/timezone";
+import { formatSingleTaskMessage, escapeMarkdown } from "../tasks/formatters";
+import type { Task } from "@teledrug/db";
 
-const greetingPrefix = "🌞 Доброе утро!";
 const TARGET_HOUR = 10;
 const FORCE_ALL_FLAG = "--all";
 const FORCE_ALL_ALT_FLAG = "--force-all";
-const MAX_CAPTION_LENGTH = 1024;
-const MAX_VISIBLE_CARDS = 4;
-const MAX_CARD_LINES = 3;
-const MAX_CARD_LINE_LENGTH = 36;
 
-const MODULE_META: Record<
-  DigestModuleId,
-  { readonly title: string; readonly icon: string; readonly accentColor: string }
-> = {
-  weather: { title: "Погода", icon: "🌤️", accentColor: "#38BDF8" },
-  fx: { title: "Курс валют", icon: "💱", accentColor: "#F472B6" },
-  calendar: { title: "Календарь", icon: "📅", accentColor: "#A78BFA" },
-  tasks: { title: "Задачи", icon: "🧭", accentColor: "#34D399" },
-};
-
-const MODULE_LABEL_PATTERNS: Partial<Record<DigestModuleId, RegExp>> = {
-  weather: /^Погода[:\s-]*/i,
-  calendar: /^События на сегодня[:\s-]*/i,
-  tasks: /^Задачи на сегодня[:\s-]*/i,
-};
+interface TaskMessage {
+  readonly text: string;
+  readonly parseMode: "Markdown";
+  readonly replyMarkup?: any;
+}
 
 interface DigestComposition {
-  readonly message: string;
   readonly imagePayload: DailyDigestImagePayload;
+  readonly tasksHeaderText: string | null;
+  readonly taskMessages: ReadonlyArray<TaskMessage>;
 }
 
 const capitalize = (value: string) =>
@@ -79,100 +67,33 @@ const formatTimeLabel = (
     timeZone,
   }).format(date);
 
-const splitLines = (value: string) =>
-  value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-const stripModuleEmoji = (value: string, moduleId: DigestModuleId) => {
-  const icon = MODULE_META[moduleId]?.icon;
-  if (icon && value.startsWith(icon)) {
-    return value.slice(icon.length).trimStart();
-  }
-  return value;
-};
-
-const stripBullet = (value: string) => value.replace(/^[-•*]\s*/, "").trim();
-
-const removeModuleLabel = (value: string, moduleId: DigestModuleId) => {
-  const pattern = MODULE_LABEL_PATTERNS[moduleId];
-  if (pattern && pattern.test(value)) {
-    return value.replace(pattern, "").trim();
-  }
-  return value;
-};
-
-const normalizeModuleLine = (line: string, moduleId: DigestModuleId) => {
-  const withoutEmoji = stripModuleEmoji(line, moduleId);
-  const withoutBullet = stripBullet(withoutEmoji);
-  const collapsed = withoutBullet.replace(/\s+/g, " ").trim();
-  const withoutLabel = removeModuleLabel(collapsed, moduleId);
-  return withoutLabel.length > 0 ? withoutLabel : collapsed;
-};
-
-const limitLines = (lines: ReadonlyArray<string>) => lines.slice(0, MAX_CARD_LINES);
-
-const truncateLine = (line: string) =>
-  line.length > MAX_CARD_LINE_LENGTH
-    ? `${line.slice(0, MAX_CARD_LINE_LENGTH - 1).trimEnd()}…`
-    : line;
-
-const buildCard = (module: DigestModuleResult): DailyDigestCard => {
-  const meta = MODULE_META[module.id];
-  const rawLines = splitLines(module.text ?? "");
-
-  if (rawLines.length === 0) {
-    return {
-      id: module.id,
-      title: meta.title,
-      icon: meta.icon,
-      accentColor: meta.accentColor,
-      lines: [],
-    };
-  }
-
-  const contentLines = rawLines.length > 1 ? rawLines.slice(1) : rawLines;
-  let normalized = contentLines
-    .map((line) => normalizeModuleLine(line, module.id))
-    .filter((line) => line.length > 0);
-
-  if (normalized.length === 0) {
-    const fallback = normalizeModuleLine(rawLines[0]!, module.id);
-    if (fallback.length > 0) {
-      normalized = [fallback];
-    }
-  }
-
-  const limited = limitLines(normalized).map(truncateLine);
-
-  return {
-    id: module.id,
-    title: meta.title,
-    icon: meta.icon,
-    accentColor: meta.accentColor,
-    lines: limited,
-  };
-};
-
-const buildFallbackCard = (): DailyDigestCard => ({
-  id: "fallback",
-  title: "Сегодня",
-  icon: "🧘",
-  accentColor: "#FACC15",
-  lines: ["Свободный день 🙌"],
-});
-
 const buildImagePayload = (
-  cards: ReadonlyArray<DailyDigestCard>,
+  modules: ReadonlyArray<DigestModuleResult>,
   date: Date,
   settings: DigestUserSettingsSnapshot
 ): DailyDigestImagePayload => {
   const timeZone = normalizeTimezone(settings.timezone);
   const locale = settings.locale || "ru-RU";
+
+  // Extract metadata (weather and fx) for corner display
+  const weatherModule = modules.find(m => m.id === 'weather');
+  const fxModule = modules.find(m => m.id === 'fx');
+
+  const extractCompactInfo = (text: string | null | undefined, pattern: RegExp): string | undefined => {
+    if (!text) return undefined;
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) return undefined;
+    // Take first meaningful line after header
+    const content = lines.length > 1 ? lines[1] : lines[0];
+    return content?.replace(pattern, '').replace(/^[-•*]\s*/, '').trim();
+  };
+
+  const weatherInfo = weatherModule ? extractCompactInfo(weatherModule.text, /^Погода[:\s-]*/i) : undefined;
+  const fxInfo = fxModule ? extractCompactInfo(fxModule.text, /^Курс валют[:\s-]*/i) : undefined;
+
   return {
     dateLabel: formatDateLabel(date, locale, timeZone),
-    cards: cards.length > 0 ? cards : [buildFallbackCard()],
+    metadata: (weatherInfo || fxInfo) ? { weather: weatherInfo, fx: fxInfo } : undefined,
     footnote: `Сформировано в ${formatTimeLabel(date, locale, timeZone)} • TeleDrug`,
   };
 };
@@ -189,6 +110,7 @@ const toUserSettingsSnapshot = (
 const composeDigest = (userId: number, date: Date) =>
   Effect.gen(function* () {
     const userRepo = yield* UserRepository;
+    const taskRepo = yield* TaskRepository;
     const settings = yield* userRepo
       .getUserSettings(userId)
       .pipe(
@@ -211,24 +133,41 @@ const composeDigest = (userId: number, date: Date) =>
       Boolean(module.text && module.text.trim().length > 0)
     );
 
-    const body = filtered
-      .map((module) => module.text?.trim() ?? "")
-      .filter((text) => text.length > 0)
-      .join("\n\n");
+    // Get tasks for today directly from repository
+    const timeZone = normalizeTimezone(settings.timezone);
+    const locale = settings.locale || "ru-RU";
+    const { start, end } = getDayBoundsInTimezone(date, timeZone);
 
-    const message =
-      body.length === 0
-        ? `${greetingPrefix}\n\nСегодня свободный день 🙌`
-        : `${greetingPrefix}\n\n${body}`;
+    const tasks = yield* taskRepo
+      .listByFilters(userId, {
+        status: ["todo"],
+        dueFrom: start,
+        dueTo: end,
+        includeWithoutDue: false,
+        limit: 50,
+      })
+      .pipe(
+        Effect.catchAll((error) => {
+          console.error("❌ Failed to fetch tasks for digest:", error);
+          return Effect.succeed([] as Task[]);
+        })
+      );
 
-    const cards = filtered
-      .map((module) => buildCard(module))
-      .filter((card) => card.lines.length > 0)
-      .slice(0, MAX_VISIBLE_CARDS);
+    let tasksHeaderText: string | null = null;
+    let taskMessages: TaskMessage[] = [];
+
+    if (tasks.length > 0) {
+      // Create header similar to listTasks formatter
+      tasksHeaderText = escapeMarkdown(`📋 Расписание на сегодня (${tasks.length})`);
+
+      // Format each task as a separate message
+      taskMessages = tasks.map((task) => formatSingleTaskMessage(task, { locale, timezone: timeZone }));
+    }
 
     return {
-      message,
-      imagePayload: buildImagePayload(cards, date, settings),
+      imagePayload: buildImagePayload(filtered, date, settings),
+      tasksHeaderText,
+      taskMessages,
     } satisfies DigestComposition;
   });
 
@@ -355,6 +294,45 @@ const sendTelegramPhoto = (
     )
   );
 
+const sendTelegramMessageWithMarkup = (
+  token: string,
+  chatId: number,
+  text: string,
+  replyMarkup?: any
+) =>
+  Effect.tryPromise(async () => {
+    const response = await fetch(
+      `https://api.telegram.org/bot${token}/sendMessage`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          parse_mode: "Markdown",
+          reply_markup: replyMarkup,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const payload = await response.text();
+      throw new Error(
+        `Telegram API error for chat ${chatId}: ${response.status} ${payload}`
+      );
+    }
+  }).pipe(
+    Effect.as(true),
+    Effect.catchAll((error) =>
+      Effect.sync(() => {
+        console.error(`❌ Failed to send message to ${chatId}:`, error);
+        return false;
+      })
+    )
+  );
+
 const deliverDigest = (
   token: string,
   chatId: number,
@@ -372,22 +350,34 @@ const deliverDigest = (
       )
     );
 
-    if (image) {
-      const caption =
-        digest.message.length <= MAX_CAPTION_LENGTH
-          ? digest.message
-          : greetingPrefix;
-      const photoSent = yield* sendTelegramPhoto(token, chatId, image, caption);
-
-      if (photoSent) {
-        if (digest.message.length > MAX_CAPTION_LENGTH) {
-          yield* sendTelegramMessage(token, chatId, digest.message);
-        }
-        return true;
-      }
+    if (!image) {
+      console.error(`❌ No image rendered for ${chatId}`);
+      return false;
     }
 
-    return yield* sendTelegramMessage(token, chatId, digest.message);
+    // Send greeting image without caption
+    const photoSent = yield* sendTelegramPhoto(token, chatId, image, "");
+
+    if (!photoSent) {
+      return false;
+    }
+
+    // Send tasks header if exists
+    if (digest.tasksHeaderText) {
+      yield* sendTelegramMessage(token, chatId, digest.tasksHeaderText);
+    }
+
+    // Send each task as a separate message with keyboard
+    for (const taskMsg of digest.taskMessages) {
+      yield* sendTelegramMessageWithMarkup(
+        token,
+        chatId,
+        taskMsg.text,
+        taskMsg.replyMarkup
+      );
+    }
+
+    return true;
   });
 
 const program = Effect.scoped(

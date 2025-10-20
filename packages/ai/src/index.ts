@@ -21,8 +21,6 @@ export {
   type ToolFormatterResult,
   type ToolResultFormatter,
   type IntegrationToolsBundle,
-  type DomainAgentType,
-  type DomainIntegrationTools,
   IntegrationRegistry,
 } from "./contracts/integration";
 export type {
@@ -39,6 +37,4 @@ export {
 } from "./agent";
 export type {
   AIAgentResponse,
-  AgentPlanEntry,
-  AgentExecution,
 } from "./agent";

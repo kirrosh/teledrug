@@ -92,26 +92,11 @@ export interface IntegrationToolsBundle {
   readonly contextMessages?: ReadonlyArray<CoreMessage>;
 }
 
-export type DomainAgentType =
-  | "digest"
-  | "journal"
-  | "tasks"
-  | "calendar"
-  | "settings";
-
-export type DomainIntegrationTools = Partial<
-  Record<DomainAgentType, IntegrationToolsBundle>
->;
-
 export interface IntegrationRegistry {
   readonly getToolsForUser: (
     userId: string | number,
     interactionType: InteractionType
   ) => Effect.Effect<IntegrationToolsBundle, IntegrationError>;
-  readonly getDomainToolsForUser: (
-    userId: string | number,
-    interactionType: InteractionType
-  ) => Effect.Effect<DomainIntegrationTools, IntegrationError>;
 }
 
 export const IntegrationRegistry =

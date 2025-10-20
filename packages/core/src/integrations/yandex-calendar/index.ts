@@ -70,6 +70,7 @@ type CreateEventParams = Schema.Schema.Type<typeof CreateEventParamsSchema>
 type CreateEventResult = Schema.Schema.Type<typeof CreateEventResultSchema>
 
 type YandexToolOptions = {
+  userId: number
   credentials: YandexCredentials
   encryptedCredentials?: {
     encrypted: string
@@ -375,6 +376,7 @@ const createCalendarEvent = async (
 
 // Создаем tools для AI SDK v5 - zod только для LLM интерфейса
 export const createYandexCalendarTools = ({
+  userId,
   credentials,
   encryptedCredentials,
   userTimezone,
@@ -601,6 +603,8 @@ export const createYandexCalendarTools = ({
 
             if (creation.success) {
               hasCreatedEvent = true
+              // Примечание: создание записи в tasks теперь происходит через TaskRepository
+              // при создании события через manageTasks, а не здесь
             }
 
             return yield* Schema.decodeUnknown(CreateEventResultSchema)(creation)

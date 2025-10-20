@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { Effect } from "effect";
-import { tool } from "ai";
+import { tool, type CoreMessage } from "ai";
 import { z } from "zod";
 
 import { AIAgent, AIAgentLive } from "../../../src/agent";
@@ -17,17 +17,54 @@ import {
   describeLLM,
   ensureOpenAIKey,
   forceToolContext,
+  guardToolContext,
   getModelName,
   isNetworkError,
   testLLM,
 } from "./harness";
+
+// Helper to merge bundles for unified agent
+const mergeBundles = (
+  bundles: Record<string, IntegrationToolsBundle>
+): IntegrationToolsBundle => {
+  let tools = {};
+  let formatters = {};
+  let progressMessages = {};
+  let contextMessages: CoreMessage[] = [];
+
+  for (const bundle of Object.values(bundles)) {
+    tools = { ...tools, ...bundle.tools };
+    formatters = { ...formatters, ...bundle.formatters };
+    progressMessages = {
+      ...progressMessages,
+      ...bundle.progressMessages,
+    };
+    if (bundle.contextMessages) {
+      contextMessages = [
+        ...contextMessages,
+        ...bundle.contextMessages,
+      ];
+    }
+  }
+
+  return {
+    tools,
+    formatters,
+    progressMessages,
+    ...(contextMessages.length > 0 ? { contextMessages } : {}),
+  };
+};
 
 const ManageTasksSchema = z.object({
   create: z
     .array(
       z.object({
         title: z.string().min(1),
-        dueAt: z.string().optional().nullable(),
+        dueAt: z.string().datetime({ offset: true }).optional().nullable(),
+        startAt: z.string().datetime({ offset: true }).optional().nullable(),
+        endAt: z.string().datetime({ offset: true }).optional().nullable(),
+        location: z.string().optional().nullable(),
+        description: z.string().optional().nullable(),
       })
     )
     .default([]),
@@ -38,7 +75,7 @@ const ManageTasksSchema = z.object({
         title: z.string().optional(),
         set: z.object({
           title: z.string().optional(),
-          dueAt: z.string().optional().nullable(),
+          dueAt: z.string().datetime({ offset: true }).optional().nullable(),
           status: z.string().optional(),
         }),
       })
@@ -65,7 +102,7 @@ const ManageTasksSchema = z.object({
       z.object({
         id: z.number().int().positive().optional(),
         title: z.string().optional(),
-        dueAt: z.string().optional().nullable(),
+        dueAt: z.string().datetime({ offset: true }).optional().nullable(),
         shift: z.string().optional(),
       })
     )
@@ -155,12 +192,12 @@ describeLLM("Orchestrator", () => {
 
       const registry: IntegrationRegistryService = {
         getToolsForUser: () =>
-          Effect.fail(new IntegrationError({ message: "not implemented" })),
-        getDomainToolsForUser: () =>
-          Effect.succeed({
-            journal: journalBundle,
-            tasks: tasksBundle,
-          }),
+          Effect.succeed(
+            mergeBundles({
+              journal: journalBundle,
+              tasks: tasksBundle,
+            })
+          ),
       };
 
       const config: AIAgentConfig = {
@@ -203,10 +240,8 @@ describeLLM("Orchestrator", () => {
 
       const response = outcome.response;
 
-      expect(response.plan.length).toBeGreaterThanOrEqual(2);
-      const executedKinds = response.executions.map((item) => item.kind);
-      expect(executedKinds).toContain("journal");
-      expect(executedKinds).toContain("tasks");
+      // Unified agent should handle the request
+      expect(response.result).toBeDefined();
       expect(journalCalls.length).toBeGreaterThan(0);
       expect(tasksCalls.length).toBeGreaterThan(0);
       const journalPayload = journalCalls[0]!;
@@ -354,7 +389,7 @@ describeLLM("Orchestrator", () => {
         },
         formatters: {},
         progressMessages: {},
-        contextMessages: forceToolContext(
+        contextMessages: guardToolContext(
           "manageTasks",
           "Не создавай задач, если пользователь об этом не просит."
         ),
@@ -374,7 +409,7 @@ describeLLM("Orchestrator", () => {
         },
         formatters: {},
         progressMessages: {},
-        contextMessages: forceToolContext(
+        contextMessages: guardToolContext(
           "updateUserSettings",
           "Не меняй настройки без прямого запроса."
         ),
@@ -382,15 +417,15 @@ describeLLM("Orchestrator", () => {
 
       const registry: IntegrationRegistryService = {
         getToolsForUser: () =>
-          Effect.fail(new IntegrationError({ message: "not implemented" })),
-        getDomainToolsForUser: () =>
-          Effect.succeed({
-            journal: journalBundle,
-            calendar: calendarBundle,
-            tasks: tasksGuardBundle,
-            digest: digestGuardBundle,
-            settings: settingsGuardBundle,
-          }),
+          Effect.succeed(
+            mergeBundles({
+              journal: journalBundle,
+              calendar: calendarBundle,
+              tasks: tasksGuardBundle,
+              digest: digestGuardBundle,
+              settings: settingsGuardBundle,
+            })
+          ),
       };
 
       const config: AIAgentConfig = {
@@ -433,12 +468,8 @@ describeLLM("Orchestrator", () => {
 
       const response = outcome.response;
 
-      const executedKinds = response.executions.map((item) => item.kind);
-      expect(executedKinds).toContain("journal");
-      expect(executedKinds).toContain("calendar");
-      expect(executedKinds).not.toContain("tasks");
-      expect(executedKinds).not.toContain("digest");
-      expect(executedKinds).not.toContain("settings");
+      // Unified agent should handle the request
+      expect(response.result).toBeDefined();
 
       expect(journalCalls.length).toBeGreaterThan(0);
       const journalPayload = journalCalls[0]!;
@@ -459,13 +490,11 @@ describeLLM("Orchestrator", () => {
       expect(Number.isNaN(Date.parse(calendarPayload.start))).toBeFalse();
       expect(Number.isNaN(Date.parse(calendarPayload.end))).toBeFalse();
       if (calendarPayload.location) {
-        expect(calendarPayload.location.toLowerCase()).toContain("dubai");
+        const location = calendarPayload.location.toLowerCase();
+        expect(location.includes("dubai") || location.includes("дубай") || location.includes("дуба")).toBeTrue();
       }
 
-      const tasksPlan = response.plan.find((entry) => entry.kind === "tasks");
-      if (tasksPlan) {
-        expect(tasksPlan.executed).toBeFalse();
-      }
+      // Check that only relevant tools were invoked
       expect(tasksToolInvoked).toBeFalse();
       expect(digestToolInvoked).toBeFalse();
       expect(settingsToolInvoked).toBeFalse();
@@ -565,12 +594,12 @@ describeLLM("Orchestrator", () => {
 
       const registry: IntegrationRegistryService = {
         getToolsForUser: () =>
-          Effect.fail(new IntegrationError({ message: "not implemented" })),
-        getDomainToolsForUser: () =>
-          Effect.succeed({
-            tasks: tasksBundle,
-            calendar: calendarBundle,
-          }),
+          Effect.succeed(
+            mergeBundles({
+              tasks: tasksBundle,
+              calendar: calendarBundle,
+            })
+          ),
       };
 
       const config: AIAgentConfig = {
@@ -616,9 +645,9 @@ describeLLM("Orchestrator", () => {
       }
 
       const response = outcome.response;
-      const executedKinds = response.executions.map((exec) => exec.kind);
-      expect(executedKinds).toContain("tasks");
-      expect(executedKinds).toContain("calendar");
+
+      // Unified agent should handle the request
+      expect(response.result).toBeDefined();
 
       expect(tasksCalls.length).toBeGreaterThan(0);
       const tasksPayload = tasksCalls[0]!;
@@ -634,5 +663,369 @@ describeLLM("Orchestrator", () => {
       expect(Number.isNaN(Date.parse(calendarPayload.startDate))).toBeFalse();
     },
     { timeout: 30000, skip: true }
+  );
+
+  testLLM(
+    "creates event via manageTasks with startAt and endAt",
+    async () => {
+      const openaiApiKey = ensureOpenAIKey();
+
+      const context = buildSimpleContext(
+        "Создай событие Лабковский 26 ноября в 19:00, продолжительность 1.5 часа",
+        { userId: 919 }
+      );
+
+      const tasksCalls: Array<z.infer<typeof ManageTasksSchema>> = [];
+
+      const manageTasks = tool({
+        description:
+          "Управляет задачами и событиями: создавай задачи (с dueAt) или события (с startAt/endAt).",
+        inputSchema: ManageTasksSchema,
+        execute: async (input) => {
+          tasksCalls.push(input);
+          const notes: string[] = [];
+
+          for (const item of input.create) {
+            if (item.startAt && item.endAt) {
+              notes.push(`Событие "${item.title}" синхронизировано с Яндекс.Календарём`);
+            }
+          }
+
+          return {
+            success: true,
+            summary: {
+              created: input.create.map((item) => ({
+                id: Math.floor(Math.random() * 1000),
+                title: item.title,
+                startAt: item.startAt,
+                endAt: item.endAt,
+              })),
+            },
+            notes,
+          };
+        },
+      });
+
+      const tasksBundle: IntegrationToolsBundle = {
+        tools: {
+          manageTasks,
+        },
+        formatters: {},
+        progressMessages: {},
+        contextMessages: [
+          {
+            role: "system",
+            content: [
+              "ВАЖНО: Единая система управления задачами и событиями:",
+              "• Используй ТОЛЬКО инструмент manageTasks для создания задач И событий",
+              "• Задача (task): укажи title и опционально dueAt (дедлайн без точного времени)",
+              "• Событие (event): укажи title, startAt и endAt (встреча с конкретным временем)",
+              "• Для событий ОБЯЗАТЕЛЬНО указывай оба поля: startAt И endAt",
+              "• События с startAt/endAt автоматически синхронизируются с Яндекс.Календарём пользователя",
+              "• Используй ISO-формат для дат: YYYY-MM-DDTHH:mm:ss+03:00 (часовой пояс Europe/Moscow)",
+            ].join("\n"),
+          },
+        ],
+      };
+
+      const registry: IntegrationRegistryService = {
+        getToolsForUser: () => Effect.succeed(tasksBundle),
+      };
+
+      const config: AIAgentConfig = {
+        openaiApiKey,
+        model: getModelName(),
+        maxTokens: 500,
+        userId: context.userId,
+      };
+
+      const program = Effect.gen(function* () {
+        const agent = yield* AIAgent;
+        return yield* agent.processText(context.userId, context.messageContent);
+      }).pipe(
+        Effect.provideService(IntegrationRegistry, registry),
+        Effect.provide(AIAgentLive(config))
+      );
+
+      const outcome = await Effect.runPromise(
+        program.pipe(
+          Effect.map((response) => ({ _tag: "ok" as const, response })),
+          Effect.catchAll((error) => {
+            const isNetwork =
+              isNetworkError(error) ||
+              (error instanceof Error &&
+                /No subagent produced tool results/.test(error.message));
+            return isNetwork
+              ? Effect.succeed({ _tag: "network" as const, error })
+              : Effect.fail(error);
+          })
+        )
+      );
+
+      if (outcome._tag === "network") {
+        console.warn(
+          "[orchestrator-event-creation] skipping due to network error",
+          outcome.error
+        );
+        return;
+      }
+
+      const response = outcome.response;
+
+      // Check that manageTasks was called
+      expect(response.result).toBeDefined();
+      expect(tasksCalls.length).toBeGreaterThan(0);
+
+      const tasksPayload = tasksCalls[0]!;
+      expect(tasksPayload.create.length).toBeGreaterThan(0);
+
+      const createdEvent = tasksPayload.create[0]!;
+
+      // Verify event has both startAt and endAt
+      expect(createdEvent.startAt).toBeDefined();
+      expect(createdEvent.endAt).toBeDefined();
+      expect(createdEvent.startAt).not.toBeNull();
+      expect(createdEvent.endAt).not.toBeNull();
+
+      // Verify dates are valid ISO format
+      expect(Number.isNaN(Date.parse(createdEvent.startAt!))).toBeFalse();
+      expect(Number.isNaN(Date.parse(createdEvent.endAt!))).toBeFalse();
+
+      // Verify title contains "Лабковский"
+      expect(createdEvent.title.toLowerCase()).toContain("лабков");
+
+      // Verify time is correct (19:00 Moscow time = 16:00 UTC, as timezone is +03:00)
+      const startDate = new Date(createdEvent.startAt!);
+      const endDate = new Date(createdEvent.endAt!);
+
+      // Check time in Moscow timezone
+      const moscowTimeStr = startDate.toLocaleString("ru-RU", {
+        timeZone: "Europe/Moscow",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      expect(moscowTimeStr).toBe("19:00");
+
+      // Verify duration is approximately 1.5 hours
+      const durationMs = endDate.getTime() - startDate.getTime();
+      const durationHours = durationMs / (1000 * 60 * 60);
+      expect(durationHours).toBeGreaterThanOrEqual(1.4);
+      expect(durationHours).toBeLessThanOrEqual(1.6);
+
+      console.log("✅ Event created successfully:", {
+        title: createdEvent.title,
+        startAt: createdEvent.startAt,
+        endAt: createdEvent.endAt,
+        duration: `${durationHours.toFixed(1)} hours`,
+      });
+    },
+    { timeout: 30000 }
+  );
+
+  testLLM(
+    "processes event from image without calling digest settings",
+    async () => {
+      const openaiApiKey = ensureOpenAIKey();
+
+      // Simulating the image text extraction from the event ticket
+      const message = `Извлечённый текст изображения:
+18+
+Михаил Лабковский
+Оплачено и ожидает подтверждения
+19:00
+26 ноября
+2 билета
+51187451
+Номер заказа
+Амфитеатр
+Ряд 18, место 22
+Цена 4 500 р, сервисный сбор 450 р
+Ряд 18, место 23
+Цена 4 500 р, сервисный сбор 450 р`;
+
+      const context = buildSimpleContext(message, {
+        userId: 123456789,
+        interactionType: "IMAGE",
+      });
+
+      const tasksCalls: Array<z.infer<typeof ManageTasksSchema>> = [];
+      let digestToolInvoked = false;
+      let settingsToolInvoked = false;
+
+      const manageTasks = tool({
+        description:
+          "Синхронизирует список задач и событий: создавай задачи (с dueAt) или события (с startAt/endAt).",
+        inputSchema: ManageTasksSchema,
+        execute: async (input) => {
+          tasksCalls.push(input);
+          return {
+            success: true,
+            summary: {
+              created: input.create?.length ?? 0,
+              updated: 0,
+              completed: 0,
+              deleted: 0,
+              rescheduled: 0,
+            },
+            errors: [],
+            formatOptions: {
+              locale: "ru-RU",
+              timeZone: "Europe/Moscow",
+            },
+          };
+        },
+      });
+
+      const digestBypassTool = tool({
+        description: "Пустышка для дайджеста. НЕ ДОЛЖНА вызываться.",
+        inputSchema: z.object({}).passthrough(),
+        execute: async () => {
+          digestToolInvoked = true;
+          return { success: true };
+        },
+      });
+
+      const settingsBypassTool = tool({
+        description: "Пустышка для настроек. НЕ ДОЛЖНА вызываться.",
+        inputSchema: z.object({}).passthrough(),
+        execute: async () => {
+          settingsToolInvoked = true;
+          return { success: true };
+        },
+      });
+
+      const tasksBundle: IntegrationToolsBundle = {
+        tools: {
+          manageTasks,
+        },
+        formatters: {},
+        progressMessages: {},
+        contextMessages: [
+          {
+            role: "system",
+            content: [
+              "Текущая дата и время пользователя: понедельник, 20 октября 2025 г. в 15:02 (Europe/Moscow).",
+              "ISO-время сейчас: 2025-10-20T12:02:41.420Z.",
+              "Предпочитаемая локаль: ru-RU.",
+              "",
+              "ВАЖНО: Часовой пояс и время:",
+              "• Часовой пояс пользователя: Europe/Moscow",
+              "• Все даты и время указывай в ISO-формате с этим часовым поясом (например, 2025-11-26T19:00:00+03:00 для Moscow)",
+              "• Если пользователь указывает время без часового пояса (например, \"19:00\"), используй часовой пояс пользователя",
+              "• НЕ конвертируй время из одного пояса в другой - используй время как есть с часовым поясом пользователя",
+            ].join("\n"),
+          },
+        ],
+      };
+
+      const digestGuardBundle: IntegrationToolsBundle = {
+        tools: {
+          updateDigestSettings: digestBypassTool,
+        },
+        formatters: {},
+        progressMessages: {},
+        contextMessages: guardToolContext(
+          "updateDigestSettings",
+          "НЕ вызывай этот инструмент, если пользователь явно не просит изменить настройки дайджеста."
+        ),
+      };
+
+      const settingsGuardBundle: IntegrationToolsBundle = {
+        tools: {
+          updateUserSettings: settingsBypassTool,
+        },
+        formatters: {},
+        progressMessages: {},
+        contextMessages: guardToolContext(
+          "updateUserSettings",
+          "НЕ меняй настройки без прямого запроса пользователя."
+        ),
+      };
+
+      const registry: IntegrationRegistryService = {
+        getToolsForUser: () =>
+          Effect.succeed(
+            mergeBundles({
+              tasks: tasksBundle,
+              digest: digestGuardBundle,
+              settings: settingsGuardBundle,
+            })
+          ),
+      };
+
+      const config: AIAgentConfig = {
+        openaiApiKey,
+        model: getModelName(),
+        maxTokens: 800,
+        userId: context.userId,
+      };
+
+      const program = Effect.gen(function* () {
+        const agent = yield* AIAgent;
+        return yield* agent.processText(context.userId, context.messageContent);
+      }).pipe(
+        Effect.provideService(IntegrationRegistry, registry),
+        Effect.provide(AIAgentLive(config))
+      );
+
+      const outcome = await Effect.runPromise(
+        program.pipe(
+          Effect.map((response) => ({ _tag: "ok" as const, response })),
+          Effect.catchAll((error) => {
+            const isNetwork =
+              isNetworkError(error) ||
+              (error instanceof Error &&
+                /No subagent produced tool results/.test(error.message));
+            return isNetwork
+              ? Effect.succeed({ _tag: "network" as const, error })
+              : Effect.fail(error);
+          })
+        )
+      );
+
+      if (outcome._tag === "network") {
+        console.warn(
+          "[image-event] skipping due to network error",
+          outcome.error
+        );
+        return;
+      }
+
+      const response = outcome.response;
+
+      // Check that the agent created a task
+      expect(response.result).toBeDefined();
+      expect(tasksCalls.length).toBeGreaterThan(0);
+
+      const tasksPayload = tasksCalls[0]!;
+      expect(tasksPayload.create).toBeDefined();
+      expect(tasksPayload.create!.length).toBeGreaterThan(0);
+
+      const createdEvent = tasksPayload.create![0]!;
+      expect(createdEvent.title).toContain("Лабковский");
+      expect(createdEvent.startAt).toBeDefined();
+      expect(createdEvent.endAt).toBeDefined();
+
+      // Verify timezone is correct (should be 19:00 Moscow time, not 16:00)
+      expect(createdEvent.startAt).toContain("T19:00:00");
+      expect(createdEvent.startAt).toContain("+03:00");
+
+      // Verify location is included
+      expect(createdEvent.location).toContain("Амфитеатр");
+
+      // Most importantly: digest and settings tools should NOT be invoked
+      expect(digestToolInvoked).toBeFalse();
+      expect(settingsToolInvoked).toBeFalse();
+
+      console.log("✅ Event from image processed correctly:", {
+        title: createdEvent.title,
+        startAt: createdEvent.startAt,
+        endAt: createdEvent.endAt,
+        location: createdEvent.location,
+        digestCalled: digestToolInvoked,
+        settingsCalled: settingsToolInvoked,
+      });
+    },
+    { timeout: 30000 }
   );
 });

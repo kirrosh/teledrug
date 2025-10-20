@@ -1,126 +1,115 @@
 import { Effect } from "effect";
 import type { Bot } from "grammy";
-import type { JournalRepository } from "../../../services/journal-repository";
-import type { TaskRepository } from "../../../services/task-repository";
+import { decodeTaskCallback } from "../../../tasks/keyboard.js";
+import { TaskRepository, TaskRepositoryLive } from "../../../services/task-repository.js";
+import { formatSingleTaskMessage } from "../../../tasks/formatters.js";
 
-export const registerCallbackHandlers = (
-  bot: Bot,
-  journalRepository: JournalRepository,
-  taskRepository: TaskRepository
-) => {
+export const registerCallbackHandlers = (bot: Bot) => {
   bot.on("callback_query:data", async (ctx) => {
-    const data = ctx.callbackQuery.data || "";
+    const callbackData = ctx.callbackQuery.data;
+    const userId = ctx.from?.id;
 
-    if (!data.startsWith("journal:")) {
+    if (!userId) {
+      await ctx.answerCallbackQuery({
+        text: "❌ Не удалось определить пользователя",
+      });
+      return;
+    }
+
+    // Декодируем callback данные задачи
+    const taskCallback = decodeTaskCallback(callbackData);
+
+    if (!taskCallback) {
+      // Это не callback задачи, игнорируем
       await ctx.answerCallbackQuery();
       return;
     }
 
-    if (data.startsWith("journal:delete:")) {
-      const [, , entryIdRaw] = data.split(":");
-      if (!entryIdRaw) {
-        await ctx.answerCallbackQuery({
-          text: "❌ Не удалось удалить запись",
-          show_alert: true,
-        });
-        return;
-      }
-      const entryId = Number.parseInt(entryIdRaw, 10);
-      const userId = ctx.from?.id || ctx.chat?.id;
+    const { action, taskId } = taskCallback;
 
-      if (!userId || Number.isNaN(entryId)) {
-        await ctx.answerCallbackQuery({
-          text: "❌ Не удалось удалить запись",
-          show_alert: true,
-        });
-        return;
-      }
-
-      try {
-        const deleted = await Effect.runPromise(
-          journalRepository.deleteEntry(entryId, userId)
+    // Обрабатываем действия с задачами
+    try {
+      if (action === "complete") {
+        // Выполняем задачу и получаем обновленные данные
+        const completed = await Effect.runPromise(
+          TaskRepository.pipe(
+            Effect.andThen((repo) => repo.complete(taskId, userId))
+          ).pipe(Effect.provide(TaskRepositoryLive))
         );
 
-        if (deleted) {
-          await ctx.answerCallbackQuery({ text: "🗑 Запись удалена" });
-          try {
-            await ctx.editMessageText("Запись не сохранена");
-          } catch (error) {
-            console.error(
-              "Не удалось обновить сообщение после удаления:",
-              error
-            );
+        if (completed) {
+          // Получаем обновленную задачу из БД
+          const updatedTask = await Effect.runPromise(
+            TaskRepository.pipe(
+              Effect.andThen((repo) => repo.findById(taskId, userId))
+            ).pipe(Effect.provide(TaskRepositoryLive))
+          );
+
+          if (updatedTask) {
+            await ctx.answerCallbackQuery({
+              text: "✅ Задача выполнена!",
+            });
+
+            // Форматируем обновленное сообщение с новым статусом и кнопками
+            try {
+              const formattedMessage = formatSingleTaskMessage(updatedTask);
+              await ctx.editMessageText(formattedMessage.text, {
+                parse_mode: formattedMessage.parseMode,
+                reply_markup: formattedMessage.replyMarkup,
+              });
+            } catch (editError) {
+              console.error("Не удалось обновить сообщение:", editError);
+            }
+          } else {
+            await ctx.answerCallbackQuery({
+              text: "✅ Задача выполнена, но не удалось обновить сообщение",
+            });
           }
         } else {
           await ctx.answerCallbackQuery({
-            text: "⚠️ Запись уже удалена",
-            show_alert: false,
+            text: "❌ Задача не найдена",
           });
         }
-      } catch (error) {
-        console.error("Ошибка при удалении записи дневника:", error);
-        await ctx.answerCallbackQuery({
-          text: "❌ Не удалось удалить запись",
-          show_alert: true,
-        });
-      }
-
-      return;
-    }
-
-    if (data.startsWith("journal:createTask:")) {
-      const parts = data.split(":");
-      const dateToken = parts[3] || "0";
-      let dueAt: Date | null = null;
-      if (/^\d{8}$/.test(dateToken)) {
-        const y = Number(dateToken.slice(0, 4));
-        const m = Number(dateToken.slice(4, 6)) - 1;
-        const d = Number(dateToken.slice(6, 8));
-        const dt = new Date(Date.UTC(y, m, d));
-        dueAt = new Date(
-          dt.getUTCFullYear(),
-          dt.getUTCMonth(),
-          dt.getUTCDate()
+      } else if (action === "delete") {
+        // Удаляем задачу
+        const result = await Effect.runPromise(
+          TaskRepository.pipe(
+            Effect.andThen((repo) => repo.delete(taskId, userId))
+          ).pipe(Effect.provide(TaskRepositoryLive))
         );
+
+        if (result) {
+          await ctx.answerCallbackQuery({
+            text: "🗑 Задача удалена",
+          });
+
+          // Удаляем сообщение полностью или обновляем его
+          try {
+            await ctx.deleteMessage();
+          } catch (deleteError) {
+            // Если не удалось удалить, обновляем текст
+            try {
+              await ctx.editMessageText("🗑 _Задача удалена_", {
+                parse_mode: "Markdown",
+              });
+            } catch (editError) {
+              console.error("Не удалось обновить сообщение:", editError);
+            }
+          }
+        } else {
+          await ctx.answerCallbackQuery({
+            text: "❌ Задача не найдена",
+          });
+        }
+      } else {
+        // Неизвестное действие
+        await ctx.answerCallbackQuery();
       }
-
-      const messageText = ctx.callbackQuery.message?.text || "";
-      const line =
-        messageText
-          .split("\n")
-          .map((l) => l.trim())
-          .find((l) => l.startsWith("• ")) || "";
-      const title = line
-        .replace(/^•\s+/, "")
-        .replace(/\s+—\s+до\s+.+$/, "")
-        .trim();
-      const userId = ctx.from?.id || ctx.chat?.id;
-
-      if (!userId || !title) {
-        await ctx.answerCallbackQuery({
-          text: "❌ Не удалось создать задачу",
-          show_alert: true,
-        });
-        return;
-      }
-
-      try {
-        await Effect.runPromise(
-          taskRepository.create({ userId, title, dueAt })
-        );
-        await ctx.answerCallbackQuery({ text: "✅ Задача создана" });
-        await ctx.reply(`✅ Создана задача: ${title}`);
-      } catch (error) {
-        console.error("Ошибка создания задачи из записи:", error);
-        await ctx.answerCallbackQuery({
-          text: "❌ Ошибка создания задачи",
-          show_alert: true,
-        });
-      }
-
-      return;
+    } catch (error) {
+      console.error("Ошибка при обработке callback:", error);
+      await ctx.answerCallbackQuery({
+        text: "❌ Произошла ошибка",
+      });
     }
-
-    await ctx.answerCallbackQuery();
   });
 };

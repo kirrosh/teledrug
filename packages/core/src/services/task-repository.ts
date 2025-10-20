@@ -24,7 +24,16 @@ export class TaskRepositoryError extends Data.TaggedError("TaskRepositoryError")
 export interface CreateTaskInput {
   readonly userId: number;
   readonly title: string;
+  readonly description?: string | null;
   readonly dueAt?: Date | null;
+  readonly startAt?: Date | null;
+  readonly endAt?: Date | null;
+  readonly location?: string | null;
+  readonly calendarEventId?: string | null;
+  readonly calendarEventUrl?: string | null;
+  readonly telegramMessageId?: number | null;
+  readonly telegramChatId?: number | null;
+  readonly metadata?: Record<string, unknown> | null;
 }
 
 export interface TaskRepository {
@@ -54,7 +63,20 @@ export interface TaskRepository {
   readonly update: (
     taskId: number,
     userId: number,
-    patch: { readonly title?: string; readonly dueAt?: Date | null; readonly status?: string }
+    patch: {
+      readonly title?: string;
+      readonly description?: string | null;
+      readonly dueAt?: Date | null;
+      readonly startAt?: Date | null;
+      readonly endAt?: Date | null;
+      readonly status?: string;
+      readonly location?: string | null;
+      readonly calendarEventId?: string | null;
+      readonly calendarEventUrl?: string | null;
+      readonly telegramMessageId?: number | null;
+      readonly telegramChatId?: number | null;
+      readonly metadata?: Record<string, unknown> | null;
+    }
   ) => Effect.Effect<Task, TaskRepositoryError>;
   readonly findById: (taskId: number, userId: number) => Effect.Effect<Task | null, TaskRepositoryError>;
   readonly findByTitleLike: (
@@ -81,8 +103,17 @@ const makeTaskRepository = Effect.sync(() => {
         const values: NewTask = {
           userId: input.userId,
           title: input.title.trim(),
+          description: input.description ?? null,
           status: "todo",
           dueAt: input.dueAt ?? null,
+          startAt: input.startAt ?? null,
+          endAt: input.endAt ?? null,
+          location: input.location ?? null,
+          calendarEventId: input.calendarEventId ?? null,
+          calendarEventUrl: input.calendarEventUrl ?? null,
+          telegramMessageId: input.telegramMessageId ?? null,
+          telegramChatId: input.telegramChatId ?? null,
+          metadata: input.metadata ?? null,
         } as NewTask;
 
         const [row] = await db.insert(tasks).values(values).returning();
@@ -270,12 +301,48 @@ const makeTaskRepository = Effect.sync(() => {
           updates.title = title;
         }
 
+        if (patch.description !== undefined) {
+          updates.description = patch.description;
+        }
+
         if (patch.dueAt !== undefined) {
           updates.dueAt = patch.dueAt;
         }
 
+        if (patch.startAt !== undefined) {
+          updates.startAt = patch.startAt;
+        }
+
+        if (patch.endAt !== undefined) {
+          updates.endAt = patch.endAt;
+        }
+
         if (patch.status !== undefined) {
           updates.status = patch.status;
+        }
+
+        if (patch.location !== undefined) {
+          updates.location = patch.location;
+        }
+
+        if (patch.calendarEventId !== undefined) {
+          updates.calendarEventId = patch.calendarEventId;
+        }
+
+        if (patch.calendarEventUrl !== undefined) {
+          updates.calendarEventUrl = patch.calendarEventUrl;
+        }
+
+        if (patch.telegramMessageId !== undefined) {
+          updates.telegramMessageId = patch.telegramMessageId;
+        }
+
+        if (patch.telegramChatId !== undefined) {
+          updates.telegramChatId = patch.telegramChatId;
+        }
+
+        if (patch.metadata !== undefined) {
+          updates.metadata = patch.metadata;
         }
 
         const [row] = await db

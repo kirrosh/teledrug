@@ -4,6 +4,7 @@ import {
   type UserConfig,
   type UserIntegrationConfig,
 } from "../schemas/database";
+import { getMainModel } from "../config/ai-models";
 
 export class UserConfigError {
   readonly _tag = "UserConfigError";
@@ -77,7 +78,7 @@ const makeUserConfigStorage = Effect.gen(function* () {
             settings: integration.settings as Record<string, any> | undefined,
           })),
           aiSettings: {
-            model: "gpt-4o-mini",
+            model: getMainModel(),
           },
           preferences: preferences ?? undefined,
         };

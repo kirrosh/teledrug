@@ -8,9 +8,14 @@ export interface DailyDigestCard {
   readonly accentColor?: string;
 }
 
+export interface DailyDigestMetadata {
+  readonly weather?: string;
+  readonly fx?: string;
+}
+
 export interface DailyDigestImagePayload {
   readonly dateLabel: string;
-  readonly cards: ReadonlyArray<DailyDigestCard>;
+  readonly metadata?: DailyDigestMetadata;
   readonly footnote?: string;
 }
 
@@ -32,140 +37,63 @@ const baseOptions: Required<DailyDigestImageOptions> = {
   accentColor: "#38BDF8",
 };
 
-const getCardAccent = (card: DailyDigestCard, fallback: string) =>
-  card.accentColor ?? fallback;
-
-const cardLines = (lines: ReadonlyArray<string>) => {
-  if (lines.length === 0) {
-    return (
-      <div
-        style={{
-          fontSize: 24,
-          color: "rgba(226, 232, 240, 0.7)",
-          marginTop: 12,
-        }}
-      >
-        Нет данных
-      </div>
-    );
+const renderMetadata = (metadata: DailyDigestMetadata | undefined) => {
+  if (!metadata || (!metadata.weather && !metadata.fx)) {
+    return null;
   }
 
   return (
     <div
       style={{
         display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        marginTop: 16,
+        gap: 16,
+        marginTop: 24,
       }}
     >
-      {lines.map((line, index) => (
-        <div
-          key={index}
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 12,
-          }}
-        >
-          <div
-            style={{
-              width: 4,
-              height: 4,
-              borderRadius: 9999,
-              backgroundColor: "rgba(226, 232, 240, 0.5)",
-              marginTop: 12,
-            }}
-          />
-          <span
-            style={{
-              color: "rgba(248, 250, 252, 0.92)",
-              fontSize: 26,
-              lineHeight: 1.35,
-              wordBreak: "break-word",
-            }}
-          >
-            {line}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-};
-
-const renderCard = (
-  card: DailyDigestCard,
-  options: Required<DailyDigestImageOptions>,
-  columnCount: number
-) => (
-  <div
-    key={card.id}
-    style={{
-      flex: "1 1 0px",
-      display: "flex",
-      flexDirection: "column",
-      background: options.panelColor,
-      borderRadius: 24,
-      padding: columnCount === 1 ? "28px 32px" : "24px 28px",
-      border: "1px solid rgba(148, 163, 184, 0.35)",
-      minWidth: 0,
-      minHeight: 0,
-    }}
-  >
-    <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-      {card.icon ? (
+      {metadata.weather && (
         <div
           style={{
-            width: columnCount === 1 ? 60 : 56,
-            height: columnCount === 1 ? 60 : 56,
-            borderRadius: 20,
-            backgroundColor: `${getCardAccent(card, options.accentColor)}22`,
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
-            fontSize: columnCount === 1 ? 34 : 32,
+            padding: "14px 24px",
+            background: "rgba(17, 27, 42, 0.8)",
+            borderRadius: 16,
+            border: "1px solid rgba(148, 163, 184, 0.2)",
           }}
         >
-          {card.icon}
+          <span
+            style={{
+              fontSize: 22,
+              color: "rgba(248, 250, 252, 0.9)",
+            }}
+          >
+            {metadata.weather}
+          </span>
         </div>
-      ) : null}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-        }}
-      >
-        <span
-          style={{
-            fontSize: 24,
-            color: "rgba(148, 163, 184, 0.9)",
-            textTransform: "uppercase",
-            letterSpacing: 4,
-          }}
-        >
-          {card.title}
-        </span>
+      )}
+      {metadata.fx && (
         <div
           style={{
-            width: 44,
-            height: 3,
-            borderRadius: 9999,
-            backgroundColor: getCardAccent(card, options.accentColor),
+            display: "flex",
+            alignItems: "center",
+            padding: "14px 24px",
+            background: "rgba(17, 27, 42, 0.8)",
+            borderRadius: 16,
+            border: "1px solid rgba(148, 163, 184, 0.2)",
           }}
-        />
-      </div>
+        >
+          <span
+            style={{
+              fontSize: 22,
+              color: "rgba(248, 250, 252, 0.9)",
+            }}
+          >
+            {metadata.fx}
+          </span>
+        </div>
+      )}
     </div>
-    {cardLines(card.lines)}
-  </div>
-);
-
-const chunkCards = (cards: ReadonlyArray<DailyDigestCard>, size: number) => {
-  const rows: DailyDigestCard[][] = [];
-  for (let index = 0; index < cards.length; index += size) {
-    rows.push(cards.slice(index, index + size));
-  }
-  return rows;
+  );
 };
 
 export const renderDailyDigestImage = async (
@@ -178,21 +106,6 @@ export const renderDailyDigestImage = async (
     width: opts?.width ?? baseOptions.width,
     height: opts?.height ?? baseOptions.height,
   };
-
-  const cards =
-    payload.cards.length > 0
-      ? payload.cards
-      : [
-          {
-            id: "fallback",
-            title: "Сегодня",
-            icon: "🧘",
-            lines: ["Свободный день 🙌"],
-          },
-        ];
-
-  const columnCount = cards.length === 1 ? 1 : 2;
-  const stackGap = columnCount === 1 ? 16 : 24;
 
   const response = new ImageResponse(
     (
@@ -216,6 +129,7 @@ export const renderDailyDigestImage = async (
             flexDirection: "column",
             flexGrow: 1,
             padding: "48px 72px",
+            justifyContent: "center",
             gap: 32,
           }}
         >
@@ -223,7 +137,7 @@ export const renderDailyDigestImage = async (
             style={{
               display: "flex",
               flexDirection: "column",
-              gap: 8,
+              gap: 16,
             }}
           >
             <span
@@ -237,30 +151,18 @@ export const renderDailyDigestImage = async (
             >
               {payload.dateLabel}
             </span>
+            <div
+              style={{
+                width: 120,
+                height: 4,
+                borderRadius: 9999,
+                background: `linear-gradient(90deg, ${options.accentColor} 0%, rgba(56, 189, 248, 0.3) 100%)`,
+              }}
+            />
           </div>
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              flexGrow: 1,
-              gap: stackGap,
-            }}
-          >
-            {chunkCards(cards, columnCount).map((row, rowIndex) => (
-              <div
-                key={`row-${row[0]?.id ?? rowIndex}`}
-                style={{
-                  display: "flex",
-                  flexDirection: columnCount === 1 ? "column" : "row",
-                  gap: stackGap,
-                  width: "100%",
-                  alignItems: "stretch",
-                }}
-              >
-                {row.map((card) => renderCard(card, options, columnCount))}
-              </div>
-            ))}
-          </div>
+
+          {renderMetadata(payload.metadata)}
+
           {payload.footnote ? (
             <div
               style={{
@@ -269,6 +171,7 @@ export const renderDailyDigestImage = async (
                 alignItems: "center",
                 fontSize: 22,
                 color: "rgba(148, 163, 184, 0.85)",
+                marginTop: "auto",
               }}
             >
               <span style={{ maxWidth: "72%", wordBreak: "break-word" }}>

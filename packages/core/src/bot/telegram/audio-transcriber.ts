@@ -7,6 +7,7 @@ import { openai } from "@ai-sdk/openai";
 import * as HttpClient from "@effect/platform/HttpClient";
 import * as HttpClientResponse from "@effect/platform/HttpClientResponse";
 import * as Headers from "@effect/platform/Headers";
+import { getTranscriptionModel } from "../../config/ai-models";
 
 const toError = (cause: unknown, fallback: string) =>
   cause instanceof Error
@@ -69,7 +70,7 @@ export const createAudioTranscriber = (telegramToken: string): AudioTranscriber 
       const transcription = yield* Effect.tryPromise({
         try: () =>
           transcribe({
-            model: openai.transcription("gpt-4o-mini-transcribe"),
+            model: openai.transcription(getTranscriptionModel()),
             audio: audioBytes,
           }),
         catch: (cause) => toError(cause, "Failed to transcribe audio"),
