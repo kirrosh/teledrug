@@ -203,10 +203,8 @@ describeLLM("Orchestrator", () => {
 
       const response = outcome.response;
 
-      expect(response.plan.length).toBeGreaterThanOrEqual(2);
-      const executedKinds = response.executions.map((item) => item.kind);
-      expect(executedKinds).toContain("journal");
-      expect(executedKinds).toContain("tasks");
+      // Unified agent should handle the request
+      expect(response.result).toBeDefined();
       expect(journalCalls.length).toBeGreaterThan(0);
       expect(tasksCalls.length).toBeGreaterThan(0);
       const journalPayload = journalCalls[0]!;
@@ -433,12 +431,8 @@ describeLLM("Orchestrator", () => {
 
       const response = outcome.response;
 
-      const executedKinds = response.executions.map((item) => item.kind);
-      expect(executedKinds).toContain("journal");
-      expect(executedKinds).toContain("calendar");
-      expect(executedKinds).not.toContain("tasks");
-      expect(executedKinds).not.toContain("digest");
-      expect(executedKinds).not.toContain("settings");
+      // Unified agent should handle the request
+      expect(response.result).toBeDefined();
 
       expect(journalCalls.length).toBeGreaterThan(0);
       const journalPayload = journalCalls[0]!;
@@ -462,10 +456,7 @@ describeLLM("Orchestrator", () => {
         expect(calendarPayload.location.toLowerCase()).toContain("dubai");
       }
 
-      const tasksPlan = response.plan.find((entry) => entry.kind === "tasks");
-      if (tasksPlan) {
-        expect(tasksPlan.executed).toBeFalse();
-      }
+      // Check that only relevant tools were invoked
       expect(tasksToolInvoked).toBeFalse();
       expect(digestToolInvoked).toBeFalse();
       expect(settingsToolInvoked).toBeFalse();
@@ -616,9 +607,9 @@ describeLLM("Orchestrator", () => {
       }
 
       const response = outcome.response;
-      const executedKinds = response.executions.map((exec) => exec.kind);
-      expect(executedKinds).toContain("tasks");
-      expect(executedKinds).toContain("calendar");
+
+      // Unified agent should handle the request
+      expect(response.result).toBeDefined();
 
       expect(tasksCalls.length).toBeGreaterThan(0);
       const tasksPayload = tasksCalls[0]!;

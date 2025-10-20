@@ -39,6 +39,4 @@ export {
 } from "./agent";
 export type {
   AIAgentResponse,
-  AgentPlanEntry,
-  AgentExecution,
 } from "./agent";

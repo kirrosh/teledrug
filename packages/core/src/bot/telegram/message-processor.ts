@@ -327,40 +327,22 @@ export const createMessageProcessor = ({
           history
         );
 
-        const { executions, toolFormatters, plan } =
-          agentResponse;
+        const { result, toolFormatters } = agentResponse;
 
-        if (plan.length > 0) {
-          console.log("🗺️ Subagent plan:");
-          for (const entry of plan) {
-            const status = entry.executed
-              ? "✅ выполнен"
-              : `⏸️ пропущен${entry.reason ? ` (${entry.reason})` : ""}`;
-            console.log(`  • ${entry.kind}: ${status}`);
-          }
-        } else {
-          console.log("🗺️ Subagent plan: <empty>");
-        }
+        const toolCalls = result.toolCalls ?? [];
+        const toolResults = result.toolResults ?? [];
 
-        const allToolCalls = executions.flatMap(
-          (execution) => execution.result.toolCalls ?? []
-        );
-
-        if (allToolCalls.length > 0) {
-          for (const call of allToolCalls) {
+        if (toolCalls.length > 0) {
+          for (const call of toolCalls) {
             const completionMessage = `Инструмент ${call.toolName} выполнен`;
             yield* updateProgress("✅", completionMessage);
           }
         }
 
-        const allToolResults = executions.flatMap(
-          (execution) => execution.result.toolResults ?? []
-        );
-
-        if (allToolResults.length === 0) {
+        if (toolResults.length === 0) {
           yield* Effect.fail(
             new TelegramClientError({
-              message: "No tool results returned by subagents",
+              message: "No tool results returned by agent",
             })
           );
         }
@@ -368,7 +350,7 @@ export const createMessageProcessor = ({
         console.log("🔧 Processing tool results to generate response...");
 
         const finalResponse = yield* generateResponseFromToolResults(
-          allToolResults,
+          toolResults,
           toolFormatters
         );
 
