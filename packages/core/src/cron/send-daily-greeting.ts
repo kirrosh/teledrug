@@ -10,42 +10,25 @@ import type {
 } from "../digest/types";
 import {
   renderDailyDigestImage,
-  type DailyDigestCard,
   type DailyDigestImagePayload,
 } from "@teledrug/og";
 import { UserRepository } from "../services/user-repository";
 import { normalizeTimezone } from "@teledrug/timezone";
 
-const greetingPrefix = "🌞 Доброе утро!";
 const TARGET_HOUR = 10;
 const FORCE_ALL_FLAG = "--all";
 const FORCE_ALL_ALT_FLAG = "--force-all";
-const MAX_CAPTION_LENGTH = 1024;
-const MAX_VISIBLE_CARDS = 4;
-const MAX_CARD_LINES = 3;
-const MAX_CARD_LINE_LENGTH = 36;
 
-const MODULE_META: Record<
-  DigestModuleId,
-  { readonly title: string; readonly icon: string; readonly accentColor: string }
-> = {
-  weather: { title: "Погода", icon: "🌤️", accentColor: "#38BDF8" },
-  fx: { title: "Курс валют", icon: "💱", accentColor: "#F472B6" },
-  calendar: { title: "Календарь", icon: "📅", accentColor: "#A78BFA" },
-  tasks: { title: "Задачи", icon: "🧭", accentColor: "#34D399" },
-  schedule: { title: "Расписание", icon: "📅", accentColor: "#A78BFA" },
-};
-
-const MODULE_LABEL_PATTERNS: Partial<Record<DigestModuleId, RegExp>> = {
-  weather: /^Погода[:\s-]*/i,
-  calendar: /^События на сегодня[:\s-]*/i,
-  tasks: /^Задачи на сегодня[:\s-]*/i,
-  schedule: /^Расписание на сегодня[:\s-]*/i,
-};
+const GREETING_VARIANTS = [
+  "Доброе утро! 🌞",
+  "С добрым утром! ☀️",
+  "Отличного дня! 🌅",
+  "Доброго утра! ✨",
+];
 
 interface DigestComposition {
-  readonly message: string;
   readonly imagePayload: DailyDigestImagePayload;
+  readonly scheduleText: string | null;
 }
 
 const capitalize = (value: string) =>
@@ -81,100 +64,36 @@ const formatTimeLabel = (
     timeZone,
   }).format(date);
 
-const splitLines = (value: string) =>
-  value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-const stripModuleEmoji = (value: string, moduleId: DigestModuleId) => {
-  const icon = MODULE_META[moduleId]?.icon;
-  if (icon && value.startsWith(icon)) {
-    return value.slice(icon.length).trimStart();
-  }
-  return value;
-};
-
-const stripBullet = (value: string) => value.replace(/^[-•*]\s*/, "").trim();
-
-const removeModuleLabel = (value: string, moduleId: DigestModuleId) => {
-  const pattern = MODULE_LABEL_PATTERNS[moduleId];
-  if (pattern && pattern.test(value)) {
-    return value.replace(pattern, "").trim();
-  }
-  return value;
-};
-
-const normalizeModuleLine = (line: string, moduleId: DigestModuleId) => {
-  const withoutEmoji = stripModuleEmoji(line, moduleId);
-  const withoutBullet = stripBullet(withoutEmoji);
-  const collapsed = withoutBullet.replace(/\s+/g, " ").trim();
-  const withoutLabel = removeModuleLabel(collapsed, moduleId);
-  return withoutLabel.length > 0 ? withoutLabel : collapsed;
-};
-
-const limitLines = (lines: ReadonlyArray<string>) => lines.slice(0, MAX_CARD_LINES);
-
-const truncateLine = (line: string) =>
-  line.length > MAX_CARD_LINE_LENGTH
-    ? `${line.slice(0, MAX_CARD_LINE_LENGTH - 1).trimEnd()}…`
-    : line;
-
-const buildCard = (module: DigestModuleResult): DailyDigestCard => {
-  const meta = MODULE_META[module.id];
-  const rawLines = splitLines(module.text ?? "");
-
-  if (rawLines.length === 0) {
-    return {
-      id: module.id,
-      title: meta.title,
-      icon: meta.icon,
-      accentColor: meta.accentColor,
-      lines: [],
-    };
-  }
-
-  const contentLines = rawLines.length > 1 ? rawLines.slice(1) : rawLines;
-  let normalized = contentLines
-    .map((line) => normalizeModuleLine(line, module.id))
-    .filter((line) => line.length > 0);
-
-  if (normalized.length === 0) {
-    const fallback = normalizeModuleLine(rawLines[0]!, module.id);
-    if (fallback.length > 0) {
-      normalized = [fallback];
-    }
-  }
-
-  const limited = limitLines(normalized).map(truncateLine);
-
-  return {
-    id: module.id,
-    title: meta.title,
-    icon: meta.icon,
-    accentColor: meta.accentColor,
-    lines: limited,
-  };
-};
-
-const buildFallbackCard = (): DailyDigestCard => ({
-  id: "fallback",
-  title: "Сегодня",
-  icon: "🧘",
-  accentColor: "#FACC15",
-  lines: ["Свободный день 🙌"],
-});
-
 const buildImagePayload = (
-  cards: ReadonlyArray<DailyDigestCard>,
+  modules: ReadonlyArray<DigestModuleResult>,
   date: Date,
   settings: DigestUserSettingsSnapshot
 ): DailyDigestImagePayload => {
   const timeZone = normalizeTimezone(settings.timezone);
   const locale = settings.locale || "ru-RU";
+
+  // Extract metadata (weather and fx) for corner display
+  const weatherModule = modules.find(m => m.id === 'weather');
+  const fxModule = modules.find(m => m.id === 'fx');
+
+  const extractCompactInfo = (text: string | null | undefined, pattern: RegExp): string | undefined => {
+    if (!text) return undefined;
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) return undefined;
+    // Take first meaningful line after header
+    const content = lines.length > 1 ? lines[1] : lines[0];
+    return content?.replace(pattern, '').replace(/^[-•*]\s*/, '').trim();
+  };
+
+  const weatherInfo = weatherModule ? extractCompactInfo(weatherModule.text, /^Погода[:\s-]*/i) : undefined;
+  const fxInfo = fxModule ? extractCompactInfo(fxModule.text, /^Курс валют[:\s-]*/i) : undefined;
+
+  const randomGreeting = GREETING_VARIANTS[Math.floor(Math.random() * GREETING_VARIANTS.length)];
+
   return {
     dateLabel: formatDateLabel(date, locale, timeZone),
-    cards: cards.length > 0 ? cards : [buildFallbackCard()],
+    greeting: randomGreeting!,
+    metadata: (weatherInfo || fxInfo) ? { weather: weatherInfo, fx: fxInfo } : undefined,
     footnote: `Сформировано в ${formatTimeLabel(date, locale, timeZone)} • TeleDrug`,
   };
 };
@@ -213,24 +132,13 @@ const composeDigest = (userId: number, date: Date) =>
       Boolean(module.text && module.text.trim().length > 0)
     );
 
-    const body = filtered
-      .map((module) => module.text?.trim() ?? "")
-      .filter((text) => text.length > 0)
-      .join("\n\n");
-
-    const message =
-      body.length === 0
-        ? `${greetingPrefix}\n\nСегодня свободный день 🙌`
-        : `${greetingPrefix}\n\n${body}`;
-
-    const cards = filtered
-      .map((module) => buildCard(module))
-      .filter((card) => card.lines.length > 0)
-      .slice(0, MAX_VISIBLE_CARDS);
+    // Extract schedule module for separate message
+    const scheduleModule = filtered.find(m => m.id === 'schedule');
+    const scheduleText = scheduleModule?.text ?? null;
 
     return {
-      message,
-      imagePayload: buildImagePayload(cards, date, settings),
+      imagePayload: buildImagePayload(filtered, date, settings),
+      scheduleText,
     } satisfies DigestComposition;
   });
 
@@ -374,22 +282,24 @@ const deliverDigest = (
       )
     );
 
-    if (image) {
-      const caption =
-        digest.message.length <= MAX_CAPTION_LENGTH
-          ? digest.message
-          : greetingPrefix;
-      const photoSent = yield* sendTelegramPhoto(token, chatId, image, caption);
-
-      if (photoSent) {
-        if (digest.message.length > MAX_CAPTION_LENGTH) {
-          yield* sendTelegramMessage(token, chatId, digest.message);
-        }
-        return true;
-      }
+    if (!image) {
+      console.error(`❌ No image rendered for ${chatId}`);
+      return false;
     }
 
-    return yield* sendTelegramMessage(token, chatId, digest.message);
+    // Send greeting image without caption
+    const photoSent = yield* sendTelegramPhoto(token, chatId, image, "");
+
+    if (!photoSent) {
+      return false;
+    }
+
+    // Send schedule as separate message if exists
+    if (digest.scheduleText && digest.scheduleText.trim().length > 0) {
+      yield* sendTelegramMessage(token, chatId, digest.scheduleText);
+    }
+
+    return true;
   });
 
 const program = Effect.scoped(
