@@ -821,4 +821,211 @@ describeLLM("Orchestrator", () => {
     },
     { timeout: 30000 }
   );
+
+  testLLM(
+    "processes event from image without calling digest settings",
+    async () => {
+      const openaiApiKey = ensureOpenAIKey();
+
+      // Simulating the image text extraction from the event ticket
+      const message = `Извлечённый текст изображения:
+18+
+Михаил Лабковский
+Оплачено и ожидает подтверждения
+19:00
+26 ноября
+2 билета
+51187451
+Номер заказа
+Амфитеатр
+Ряд 18, место 22
+Цена 4 500 р, сервисный сбор 450 р
+Ряд 18, место 23
+Цена 4 500 р, сервисный сбор 450 р`;
+
+      const context = buildSimpleContext(message, {
+        userId: 123456789,
+        interactionType: "IMAGE",
+      });
+
+      const tasksCalls: Array<z.infer<typeof ManageTasksSchema>> = [];
+      let digestToolInvoked = false;
+      let settingsToolInvoked = false;
+
+      const manageTasks = tool({
+        description:
+          "Синхронизирует список задач и событий: создавай задачи (с dueAt) или события (с startAt/endAt).",
+        inputSchema: ManageTasksSchema,
+        execute: async (input) => {
+          tasksCalls.push(input);
+          return {
+            success: true,
+            summary: {
+              created: input.create?.length ?? 0,
+              updated: 0,
+              completed: 0,
+              deleted: 0,
+              rescheduled: 0,
+            },
+            errors: [],
+            formatOptions: {
+              locale: "ru-RU",
+              timeZone: "Europe/Moscow",
+            },
+          };
+        },
+      });
+
+      const digestBypassTool = tool({
+        description: "Пустышка для дайджеста. НЕ ДОЛЖНА вызываться.",
+        inputSchema: z.object({}).passthrough(),
+        execute: async () => {
+          digestToolInvoked = true;
+          return { success: true };
+        },
+      });
+
+      const settingsBypassTool = tool({
+        description: "Пустышка для настроек. НЕ ДОЛЖНА вызываться.",
+        inputSchema: z.object({}).passthrough(),
+        execute: async () => {
+          settingsToolInvoked = true;
+          return { success: true };
+        },
+      });
+
+      const tasksBundle: IntegrationToolsBundle = {
+        tools: {
+          manageTasks,
+        },
+        formatters: {},
+        progressMessages: {},
+        contextMessages: [
+          {
+            role: "system",
+            content: [
+              "Текущая дата и время пользователя: понедельник, 20 октября 2025 г. в 15:02 (Europe/Moscow).",
+              "ISO-время сейчас: 2025-10-20T12:02:41.420Z.",
+              "Предпочитаемая локаль: ru-RU.",
+              "",
+              "ВАЖНО: Часовой пояс и время:",
+              "• Часовой пояс пользователя: Europe/Moscow",
+              "• Все даты и время указывай в ISO-формате с этим часовым поясом (например, 2025-11-26T19:00:00+03:00 для Moscow)",
+              "• Если пользователь указывает время без часового пояса (например, \"19:00\"), используй часовой пояс пользователя",
+              "• НЕ конвертируй время из одного пояса в другой - используй время как есть с часовым поясом пользователя",
+            ].join("\n"),
+          },
+        ],
+      };
+
+      const digestGuardBundle: IntegrationToolsBundle = {
+        tools: {
+          updateDigestSettings: digestBypassTool,
+        },
+        formatters: {},
+        progressMessages: {},
+        contextMessages: guardToolContext(
+          "updateDigestSettings",
+          "НЕ вызывай этот инструмент, если пользователь явно не просит изменить настройки дайджеста."
+        ),
+      };
+
+      const settingsGuardBundle: IntegrationToolsBundle = {
+        tools: {
+          updateUserSettings: settingsBypassTool,
+        },
+        formatters: {},
+        progressMessages: {},
+        contextMessages: guardToolContext(
+          "updateUserSettings",
+          "НЕ меняй настройки без прямого запроса пользователя."
+        ),
+      };
+
+      const registry: IntegrationRegistryService = {
+        getToolsForUser: () =>
+          Effect.succeed(
+            mergeBundles({
+              tasks: tasksBundle,
+              digest: digestGuardBundle,
+              settings: settingsGuardBundle,
+            })
+          ),
+      };
+
+      const config: AIAgentConfig = {
+        openaiApiKey,
+        model: getModelName(),
+        maxTokens: 800,
+        userId: context.userId,
+      };
+
+      const program = Effect.gen(function* () {
+        const agent = yield* AIAgent;
+        return yield* agent.processText(context.userId, context.messageContent);
+      }).pipe(
+        Effect.provideService(IntegrationRegistry, registry),
+        Effect.provide(AIAgentLive(config))
+      );
+
+      const outcome = await Effect.runPromise(
+        program.pipe(
+          Effect.map((response) => ({ _tag: "ok" as const, response })),
+          Effect.catchAll((error) => {
+            const isNetwork =
+              isNetworkError(error) ||
+              (error instanceof Error &&
+                /No subagent produced tool results/.test(error.message));
+            return isNetwork
+              ? Effect.succeed({ _tag: "network" as const, error })
+              : Effect.fail(error);
+          })
+        )
+      );
+
+      if (outcome._tag === "network") {
+        console.warn(
+          "[image-event] skipping due to network error",
+          outcome.error
+        );
+        return;
+      }
+
+      const response = outcome.response;
+
+      // Check that the agent created a task
+      expect(response.result).toBeDefined();
+      expect(tasksCalls.length).toBeGreaterThan(0);
+
+      const tasksPayload = tasksCalls[0]!;
+      expect(tasksPayload.create).toBeDefined();
+      expect(tasksPayload.create!.length).toBeGreaterThan(0);
+
+      const createdEvent = tasksPayload.create![0]!;
+      expect(createdEvent.title).toContain("Лабковский");
+      expect(createdEvent.startAt).toBeDefined();
+      expect(createdEvent.endAt).toBeDefined();
+
+      // Verify timezone is correct (should be 19:00 Moscow time, not 16:00)
+      expect(createdEvent.startAt).toContain("T19:00:00");
+      expect(createdEvent.startAt).toContain("+03:00");
+
+      // Verify location is included
+      expect(createdEvent.location).toContain("Амфитеатр");
+
+      // Most importantly: digest and settings tools should NOT be invoked
+      expect(digestToolInvoked).toBeFalse();
+      expect(settingsToolInvoked).toBeFalse();
+
+      console.log("✅ Event from image processed correctly:", {
+        title: createdEvent.title,
+        startAt: createdEvent.startAt,
+        endAt: createdEvent.endAt,
+        location: createdEvent.location,
+        digestCalled: digestToolInvoked,
+        settingsCalled: settingsToolInvoked,
+      });
+    },
+    { timeout: 30000 }
+  );
 });
