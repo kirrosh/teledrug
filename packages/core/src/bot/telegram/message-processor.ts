@@ -339,29 +339,20 @@ export const createMessageProcessor = ({
           }
         }
 
-        let finalResponse: { text: string; parseMode?: "Markdown" | "HTML"; replyMarkup?: any; metadata?: Record<string, unknown> };
-
-        if (toolResults.length > 0) {
-          console.log("🔧 Processing tool results to generate response...");
-          finalResponse = yield* generateResponseFromToolResults(
-            toolResults,
-            toolFormatters
-          );
-        } else if (result.text) {
-          // Agent returned text without calling tools
-          console.log("📝 Agent returned text response without tool calls");
-          finalResponse = {
-            text: result.text,
-            parseMode: "Markdown",
-          };
-        } else {
+        if (toolResults.length === 0) {
           yield* Effect.fail(
             new TelegramClientError({
-              message: "No tool results or text returned by agent",
+              message: "No tool results returned by agent (toolChoice=required should prevent this)",
             })
           );
-          return; // TypeScript needs this for type narrowing
         }
+
+        console.log("🔧 Processing tool results to generate response...");
+
+        const finalResponse = yield* generateResponseFromToolResults(
+          toolResults,
+          toolFormatters
+        );
 
         console.log("📝 Final response text:", finalResponse.text);
 

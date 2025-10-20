@@ -208,6 +208,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
               ...(toolNames.length > 0
                 ? {
                     tools: toolsBundle.tools,
+                    toolChoice: "required", // Force model to call at least one tool
                   }
                 : {}),
               maxOutputTokens: validatedConfig.maxTokens,
