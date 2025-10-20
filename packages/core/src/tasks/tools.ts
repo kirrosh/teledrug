@@ -8,6 +8,8 @@ import type { TaskRepository as TaskRepositoryService } from "../services/task-r
 import { CalendarSyncService } from "../services/calendar-sync";
 import type { Task } from "@teledrug/db";
 import { isEvent } from "./utils";
+import { formatSingleTaskMessage, taskStatusEmoji, taskStatusLabel, escapeMarkdown, formatDueDate } from "./formatters";
+import { createTaskKeyboard } from "./keyboard";
 
 const AddTaskSchema = z.object({
   title: z.string().min(1),
@@ -186,8 +188,7 @@ interface FormatDueDateOptions {
   readonly timeZone?: string;
 }
 
-const escapeMarkdown = (value: string): string =>
-  value.replace(/[\\_\*\[\]\(\)~`>#+=|{}.!-]/g, (match) => `\\${match}`);
+// escapeMarkdown, taskStatusEmoji, taskStatusLabel теперь импортируются из formatters.ts
 
 type RepoTask = Task;
 
@@ -195,18 +196,6 @@ type ResolveResult =
   | { readonly kind: "one"; readonly task: RepoTask }
   | { readonly kind: "many"; readonly tasks: ReadonlyArray<RepoTask> }
   | { readonly kind: "none" };
-
-const taskStatusEmoji: Record<string, string> = {
-  todo: "🟦",
-  done: "✅",
-  cancelled: "🚫",
-};
-
-const taskStatusLabel: Record<string, string> = {
-  todo: "активна",
-  done: "выполнена",
-  cancelled: "отменена",
-};
 
 type ListTasksTaskItem = {
   id: number;
@@ -359,6 +348,7 @@ interface ManageTasksResult {
   readonly errors: ReadonlyArray<string>;
   readonly notes?: ReadonlyArray<string>;
   readonly formatOptions?: FormatDueDateOptions;
+  readonly createdTasks?: ReadonlyArray<Task>; // Полные объекты созданных задач для генерации клавиатур
 }
 
 const emptySummary = (): ManageTasksSummary => ({
@@ -379,6 +369,7 @@ const applyManageTasks = (
     const summary = emptySummary();
     const errors: string[] = [];
     const notes: string[] = [];
+    const createdTasks: Task[] = []; // Храним полные объекты созданных задач
 
     for (const createInput of input.create) {
       try {
@@ -436,6 +427,8 @@ const applyManageTasks = (
           title: task.title,
           dueAt: task.dueAt ? new Date(task.dueAt).toISOString() : null,
         });
+
+        createdTasks.push(task); // Сохраняем полный объект задачи
 
         // Синхронизируем с календарем если это событие
         if (isEvent(task)) {
@@ -687,6 +680,7 @@ const applyManageTasks = (
       errors,
       notes: notes.length > 0 ? notes : undefined,
       formatOptions,
+      createdTasks: createdTasks.length > 0 ? createdTasks : undefined,
     } satisfies ManageTasksResult;
   });
 
@@ -795,8 +789,22 @@ const formatManageResult: ToolResultFormatter = (output) =>
       ? sections.join("\n\n")
       : "ℹ️ Не потребовалось менять задачи.";
 
+    // Если создана ровно одна задача, добавляем inline-клавиатуру
+    const createdTasks = result.createdTasks;
+    if (createdTasks && createdTasks.length === 1) {
+      const task = createdTasks[0]!;
+      const keyboard = createTaskKeyboard(task);
+      return {
+        text,
+        parseMode: "Markdown",
+        replyMarkup: keyboard,
+      };
+    }
+
     return { text, parseMode: "Markdown" };
   });
+
+// formatSingleTaskMessage теперь импортируется из formatters.ts
 
 const formatListTasksResult: ToolResultFormatter = (output) =>
   Effect.sync(() => {
@@ -870,36 +878,23 @@ const formatListTasksResult: ToolResultFormatter = (output) =>
       };
     }
 
-    const lines = tasks.map((task) => {
-      const emoji = taskStatusEmoji[task.status] ?? "•";
-      const title = escapeMarkdown(task.title.trim());
-      const dueLabel = formatDueDate(task.dueAt, {
-        locale,
-        timeZone: timezone,
-      });
-      const details: string[] = [];
-      if (dueLabel !== "—") {
-        details.push(`до ${escapeMarkdown(dueLabel)}`);
-      }
-      if (task.status !== "todo") {
-        details.push(taskStatusLabel[task.status] ?? task.status);
-      }
-      const suffix = details.length ? ` (${details.join(", ")})` : "";
-      return `${emoji} #${task.id} — ${title}${suffix}`;
-    });
+    // Генерируем заголовочное сообщение
+    const headerText = headerLines.map((line) => escapeMarkdown(line)).join("\n");
 
-    const text = [
-      ...headerLines.map((line) => escapeMarkdown(line)),
-      ...lines,
-    ].join("\n");
+    // Генерируем отдельные сообщения для каждой задачи
+    const taskMessages = tasks.map((task) =>
+      formatSingleTaskMessage(task, { locale, timezone })
+    );
 
     return {
-      text,
+      text: headerText,
       parseMode: "Markdown",
       metadata: {
         filters,
         count: tasks.length,
         timezone,
+        // Дополнительные сообщения для каждой задачи
+        additionalMessages: taskMessages,
       },
     };
   });

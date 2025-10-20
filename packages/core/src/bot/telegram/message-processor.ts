@@ -130,6 +130,7 @@ export const createMessageProcessor = ({
 
     const chatId = ctx.chat.id;
     const userId = ctx.from?.id || chatId;
+    const userMessageId = ctx.message?.message_id; // ID сообщения пользователя для reply_to
     const interactionType: InteractionType =
       options.interactionType ?? "TEXT";
     const initialProgressText =
@@ -203,7 +204,11 @@ export const createMessageProcessor = ({
           console.error("Не удалось обновить сообщение прогресса:", error);
         }
       } else {
-        const progressMessage = await ctx.reply(initialProgressText);
+        const progressMessage = await ctx.reply(initialProgressText, {
+          reply_parameters: userMessageId
+            ? { message_id: userMessageId }
+            : undefined,
+        });
         progressMessageId = progressMessage.message_id;
         updateLastProgress(initialProgressText);
       }
@@ -272,12 +277,16 @@ export const createMessageProcessor = ({
           ? editMessageSafe(response.text, options)
           : editMessageSafe(response.text);
 
-        return editEffect.pipe(
+        // Основной эффект - отправка/редактирование основного сообщения
+        const mainMessageEffect = editEffect.pipe(
           Effect.catchAll(() =>
             Effect.promise(() =>
               ctx.reply(response.text, {
                 parse_mode: response.parseMode,
                 reply_markup: response.replyMarkup,
+                reply_parameters: userMessageId
+                  ? { message_id: userMessageId }
+                  : undefined,
               })
             ).pipe(
               Effect.catchAll((fallbackError) =>
@@ -291,6 +300,46 @@ export const createMessageProcessor = ({
             )
           )
         );
+
+        // Проверяем наличие дополнительных сообщений в metadata
+        const additionalMessages = response.metadata?.additionalMessages;
+
+        if (
+          additionalMessages &&
+          Array.isArray(additionalMessages) &&
+          additionalMessages.length > 0
+        ) {
+          // Отправляем основное сообщение, затем дополнительные
+          return mainMessageEffect.pipe(
+            Effect.andThen(() =>
+              Effect.forEach(
+                additionalMessages,
+                (message: any) =>
+                  Effect.promise(() =>
+                    ctx.reply(message.text, {
+                      parse_mode: message.parseMode,
+                      reply_markup: message.replyMarkup,
+                      reply_parameters: userMessageId
+                        ? { message_id: userMessageId }
+                        : undefined,
+                    })
+                  ).pipe(
+                    Effect.catchAll((error) =>
+                      Effect.sync(() =>
+                        console.error(
+                          "Не удалось отправить дополнительное сообщение:",
+                          error
+                        )
+                      )
+                    )
+                  ),
+                { concurrency: 1 } // Отправляем последовательно
+              )
+            )
+          );
+        }
+
+        return mainMessageEffect;
       };
 
       const toolProgressLayer = Layer.succeed(ToolProgressReporter, {
