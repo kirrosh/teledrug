@@ -27,18 +27,16 @@ const createBundle = (toolName: string): IntegrationToolsBundle => ({
 describe("executeAgentPlan", () => {
   it("supports optional short-circuit behaviour", async () => {
     const executionOrder: DomainAgentType[] = [
-      "journal",
+      "digest",
       "tasks",
       "calendar",
-      "digest",
       "settings",
     ];
 
     const domainTools: DomainIntegrationTools = {
-      journal: createBundle("createJournalEntry"),
+      digest: createBundle("updateDigestSettings"),
       tasks: createBundle("manageTasks"),
       calendar: createBundle("createCalendarEvent"),
-      digest: createBundle("updateDigestSettings"),
       settings: createBundle("updateUserSettings"),
     };
 
@@ -75,10 +73,10 @@ describe("executeAgentPlan", () => {
       })
     );
 
-    expect(runCalls).toEqual(["journal", "tasks"]);
+    expect(runCalls).toEqual(["digest", "tasks"]);
     expect(successfulExecutions.map((exec) => exec.kind)).toEqual(["tasks"]);
     expect(agentPlan.map((entry) => entry.kind)).toEqual([
-      "journal",
+      "digest",
       "tasks",
     ]);
     const firstEntry = agentPlan[0]!;
@@ -89,9 +87,9 @@ describe("executeAgentPlan", () => {
   });
 
   it("executes every agent when short-circuit disabled", async () => {
-    const executionOrder: DomainAgentType[] = ["journal", "tasks"];
+    const executionOrder: DomainAgentType[] = ["digest", "tasks"];
     const domainTools: DomainIntegrationTools = {
-      journal: createBundle("createJournalEntry"),
+      digest: createBundle("updateDigestSettings"),
       tasks: createBundle("manageTasks"),
     };
 
@@ -127,9 +125,9 @@ describe("executeAgentPlan", () => {
       })
     );
 
-    expect(runCalls).toEqual(["journal", "tasks"]);
+    expect(runCalls).toEqual(["digest", "tasks"]);
     expect(successfulExecutions.map((exec) => exec.kind)).toEqual([
-      "journal",
+      "digest",
       "tasks",
     ]);
     expect(agentPlan.every((entry) => entry.executed)).toBeTrue();

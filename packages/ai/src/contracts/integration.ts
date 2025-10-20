@@ -94,7 +94,6 @@ export interface IntegrationToolsBundle {
 
 export type DomainAgentType =
   | "digest"
-  | "journal"
   | "tasks"
   | "calendar"
   | "settings";

@@ -5,7 +5,6 @@ import { UserConfigStorage } from "../../services/user-config-storage";
 import { AIAgentFactory } from "../../services/ai-agent";
 import { MessageHistory } from "../../services/message-history";
 import { IntegrationRegistry } from "../../services/integration-registry";
-import { JournalRepository } from "../../services/journal-repository";
 import { TaskRepository } from "../../services/task-repository";
 import type { BotConfig, UpdateContext } from "../../types";
 import { createMessageProcessor } from "./message-processor";
@@ -76,7 +75,6 @@ const makeTelegramClient = (config: BotConfig) =>
     const aiAgentFactory = yield* AIAgentFactory;
     const messageHistory = yield* MessageHistory;
     const integrationRegistry = yield* IntegrationRegistry;
-    const journalRepository = yield* JournalRepository;
     const taskRepository = yield* TaskRepository;
 
     const bot = new Bot(config.telegramToken);
@@ -126,7 +124,7 @@ const makeTelegramClient = (config: BotConfig) =>
       webAppUnavailableResponse,
     });
 
-    registerCallbackHandlers(bot, journalRepository, taskRepository);
+    registerCallbackHandlers(bot);
     registerMessageHandlers(bot, messageProcessor, audioTranscriber, imageAnalyzer);
 
     const start = Effect.gen(function* () {

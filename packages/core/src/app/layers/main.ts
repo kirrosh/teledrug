@@ -8,8 +8,6 @@ import { UserConfigStorageLive } from "../../services/user-config-storage";
 import { AIAgentFactoryLive } from "../../services/ai-agent";
 import { IntegrationRegistryLive } from "../../services/integration-registry";
 import { DigestSettingsRepositoryLive } from "../../services/digest-settings";
-import { JournalAnalysisServiceLive } from "../../services/journal-analysis";
-import { JournalRepositoryLive } from "../../services/journal-repository";
 import { TaskRepositoryLive } from "../../services/task-repository";
 import type { BotConfig } from "../../types";
 import { getMainModel } from "../../config/ai-models";
@@ -22,8 +20,6 @@ export const createMainLayer = (
   const cryptography = CryptographyServiceLive;
   const encryption = EncryptionServiceLive;
   const messageHistory = MessageHistoryLive;
-  const journalAnalysis = JournalAnalysisServiceLive;
-  const journalRepository = JournalRepositoryLive;
   const taskRepository = TaskRepositoryLive;
 
   // Level 1: UserRepository требует EncryptionService
@@ -46,8 +42,6 @@ export const createMainLayer = (
     IntegrationRegistryLive,
     Layer.provide(digestSettings),
     Layer.provide(userRepository),
-    Layer.provide(journalAnalysis),
-    Layer.provide(journalRepository),
     Layer.provide(taskRepository)
   );
 
@@ -72,7 +66,6 @@ export const createMainLayer = (
         messageHistory,
         cryptography,
         integrationRegistry, // ✅ Явно добавляем для TelegramClient
-        journalRepository,
         taskRepository
       )
     )
@@ -85,8 +78,6 @@ export const createMainLayer = (
     cryptography,
     encryption,
     messageHistory,
-    journalAnalysis,
-    journalRepository,
     integrationRegistry,
 
     // Сервисы с разрешенными зависимостями

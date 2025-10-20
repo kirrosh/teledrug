@@ -22,9 +22,6 @@ import {
 import { UserRepository } from "./user-repository";
 import { createDigestTools } from "../digest/tools";
 import { DigestSettingsRepository } from "./digest-settings";
-import { createJournalTools } from "../journal/tools";
-import { JournalAnalysisService } from "./journal-analysis";
-import { JournalRepository } from "./journal-repository";
 import { createTaskTools } from "../tasks/tools";
 import { createUserSettingsTools } from "../user/tools";
 import { TaskRepository, TaskRepositoryLive } from "./task-repository";
@@ -80,8 +77,6 @@ const mergeBundles = (
 const makeIntegrationRegistry = Effect.gen(function* () {
   const userRepository = yield* UserRepository;
   const digestSettings = yield* DigestSettingsRepository;
-  const journalAnalysis = yield* JournalAnalysisService;
-  const journalRepository = yield* JournalRepository;
   // TaskRepository is lightweight; we'll provide its live layer on demand
 
   yield* Effect.sync(() => console.log("🔧 Initializing Integration Registry..."));
@@ -120,21 +115,6 @@ const makeIntegrationRegistry = Effect.gen(function* () {
       );
 
       domainBundles.digest = digestToolsBundle;
-
-      const journalToolsBundle = yield* createJournalTools(numericUserId).pipe(
-        Effect.provideService(JournalAnalysisService, journalAnalysis),
-        Effect.provideService(JournalRepository, journalRepository),
-        Effect.provide(TaskRepositoryLive),
-        Effect.mapError(
-          (cause) =>
-            new IntegrationError({
-              message: "Failed to prepare journal tools",
-              cause,
-            })
-        )
-      );
-
-      domainBundles.journal = journalToolsBundle;
 
       const userSettings = yield* userRepository
         .getUserSettings(numericUserId)
