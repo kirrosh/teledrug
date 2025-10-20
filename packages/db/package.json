@@ -1,0 +1,23 @@
+{
+  "name": "@teledrug/db",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./migrations/*": "./migrations/*"
+  },
+  "scripts": {
+    "build": "echo \"@teledrug/db: nothing to build\"",
+    "lint": "echo \"@teledrug/db: no lint step configured\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.44.5",
+    "postgres": "^3.4.7"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.4",
+    "typescript": "5.9.2"
+  }
+}

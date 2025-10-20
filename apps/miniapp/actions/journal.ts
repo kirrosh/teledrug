@@ -5,11 +5,7 @@ import { z } from "zod";
 
 import { authorizedAction } from "@/actions/action-client";
 import type { JournalEntry as JournalEntryDto, JournalResponse } from "@/types/api";
-import { db } from "@teledrug/core/storage/database/client";
-import {
-  journalEntries,
-  type JournalEntry,
-} from "@teledrug/core/storage/database/schema";
+import { db, journalEntries, type JournalEntry } from "@teledrug/db";
 
 const serializeJournalEntry = (entry: JournalEntry): JournalEntryDto => ({
   id: entry.id,

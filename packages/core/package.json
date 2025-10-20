@@ -7,14 +7,17 @@
     "build": "bun build src/index.ts --outdir dist --target bun",
     "db:generate": "drizzle-kit generate --config ../../drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config ../../drizzle.config.ts",
-    "db:studio": "drizzle-kit studio --config ./src/storage/database/drizzle.config.ts"
+    "db:studio": "drizzle-kit studio --config ../db/drizzle.config.ts"
   },
   "exports": {
     ".": "./src/index.ts",
     "./*": "./src/*"
   },
   "dependencies": {
+    "@teledrug/db": "workspace:*",
+    "@teledrug/encryption": "workspace:*",
     "@teledrug/og": "workspace:*",
+    "@teledrug/timezone": "workspace:*",
     "@ai-sdk/openai": "^2.0.32",
     "@effect/platform": "^0.90.10",
     "@effect/platform-node": "^0.96.1",

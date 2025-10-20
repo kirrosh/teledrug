@@ -1,1 +1,1 @@
-import "@teledrug/core/effect/cron/send-daily-greeting";
+import "@teledrug/core/cron/send-daily-greeting";

@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import {
   createYandexCalendarTools,
   YandexCredentials,
-} from "../../packages/core/src/effect/integrations/yandex-calendar";
+} from "@teledrug/core/integrations/yandex-calendar";
 
 describe("calendar formatter", () => {
   it("renders create event result with user timezone", async () => {
@@ -21,6 +21,7 @@ describe("calendar formatter", () => {
     });
 
     const formatter = formatters.createEvent;
+    expect(formatter).toBeDefined();
     const output = {
       success: true,
       eventId: "teledrug-1@yandex.ru",
@@ -36,7 +37,7 @@ describe("calendar formatter", () => {
       message: "Событие \"Чистка зубов\" создано",
     };
 
-    const formatted = await Effect.runPromise(formatter(output));
+    const formatted = await Effect.runPromise(formatter!(output));
 
     expect(formatted.text).toContain("18:30–19:00");
     expect(formatted.text).toContain("Europe/Moscow");
