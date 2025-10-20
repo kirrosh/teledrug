@@ -13,15 +13,25 @@ import {
   type DailyDigestImagePayload,
 } from "@teledrug/og";
 import { UserRepository } from "../services/user-repository";
-import { normalizeTimezone } from "@teledrug/timezone";
+import { TaskRepository } from "../services/task-repository";
+import { normalizeTimezone, getDayBoundsInTimezone } from "@teledrug/timezone";
+import { formatSingleTaskMessage, escapeMarkdown } from "../tasks/formatters";
+import type { Task } from "@teledrug/db";
 
 const TARGET_HOUR = 10;
 const FORCE_ALL_FLAG = "--all";
 const FORCE_ALL_ALT_FLAG = "--force-all";
 
+interface TaskMessage {
+  readonly text: string;
+  readonly parseMode: "Markdown";
+  readonly replyMarkup?: any;
+}
+
 interface DigestComposition {
   readonly imagePayload: DailyDigestImagePayload;
-  readonly scheduleText: string | null;
+  readonly tasksHeaderText: string | null;
+  readonly taskMessages: ReadonlyArray<TaskMessage>;
 }
 
 const capitalize = (value: string) =>
@@ -100,6 +110,7 @@ const toUserSettingsSnapshot = (
 const composeDigest = (userId: number, date: Date) =>
   Effect.gen(function* () {
     const userRepo = yield* UserRepository;
+    const taskRepo = yield* TaskRepository;
     const settings = yield* userRepo
       .getUserSettings(userId)
       .pipe(
@@ -122,13 +133,41 @@ const composeDigest = (userId: number, date: Date) =>
       Boolean(module.text && module.text.trim().length > 0)
     );
 
-    // Extract schedule module for separate message
-    const scheduleModule = filtered.find(m => m.id === 'schedule');
-    const scheduleText = scheduleModule?.text ?? null;
+    // Get tasks for today directly from repository
+    const timeZone = normalizeTimezone(settings.timezone);
+    const locale = settings.locale || "ru-RU";
+    const { start, end } = getDayBoundsInTimezone(date, timeZone);
+
+    const tasks = yield* taskRepo
+      .listByFilters(userId, {
+        status: ["todo"],
+        dueFrom: start,
+        dueTo: end,
+        includeWithoutDue: false,
+        limit: 50,
+      })
+      .pipe(
+        Effect.catchAll((error) => {
+          console.error("❌ Failed to fetch tasks for digest:", error);
+          return Effect.succeed([] as Task[]);
+        })
+      );
+
+    let tasksHeaderText: string | null = null;
+    let taskMessages: TaskMessage[] = [];
+
+    if (tasks.length > 0) {
+      // Create header similar to listTasks formatter
+      tasksHeaderText = escapeMarkdown(`📋 Расписание на сегодня (${tasks.length})`);
+
+      // Format each task as a separate message
+      taskMessages = tasks.map((task) => formatSingleTaskMessage(task, { locale, timezone: timeZone }));
+    }
 
     return {
       imagePayload: buildImagePayload(filtered, date, settings),
-      scheduleText,
+      tasksHeaderText,
+      taskMessages,
     } satisfies DigestComposition;
   });
 
@@ -255,6 +294,45 @@ const sendTelegramPhoto = (
     )
   );
 
+const sendTelegramMessageWithMarkup = (
+  token: string,
+  chatId: number,
+  text: string,
+  replyMarkup?: any
+) =>
+  Effect.tryPromise(async () => {
+    const response = await fetch(
+      `https://api.telegram.org/bot${token}/sendMessage`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          parse_mode: "Markdown",
+          reply_markup: replyMarkup,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const payload = await response.text();
+      throw new Error(
+        `Telegram API error for chat ${chatId}: ${response.status} ${payload}`
+      );
+    }
+  }).pipe(
+    Effect.as(true),
+    Effect.catchAll((error) =>
+      Effect.sync(() => {
+        console.error(`❌ Failed to send message to ${chatId}:`, error);
+        return false;
+      })
+    )
+  );
+
 const deliverDigest = (
   token: string,
   chatId: number,
@@ -284,9 +362,19 @@ const deliverDigest = (
       return false;
     }
 
-    // Send schedule as separate message if exists
-    if (digest.scheduleText && digest.scheduleText.trim().length > 0) {
-      yield* sendTelegramMessage(token, chatId, digest.scheduleText);
+    // Send tasks header if exists
+    if (digest.tasksHeaderText) {
+      yield* sendTelegramMessage(token, chatId, digest.tasksHeaderText);
+    }
+
+    // Send each task as a separate message with keyboard
+    for (const taskMsg of digest.taskMessages) {
+      yield* sendTelegramMessageWithMarkup(
+        token,
+        chatId,
+        taskMsg.text,
+        taskMsg.replyMarkup
+      );
     }
 
     return true;
