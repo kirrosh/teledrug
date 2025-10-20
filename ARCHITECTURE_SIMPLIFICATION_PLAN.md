@@ -804,14 +804,23 @@ bun run start
 - TypeScript компилируется без ошибок
 - Все тесты проходят (1 pass, 14 expect())
 
-### Фаза 4: Тестирование (2-3 часа)
-- [ ] Удалить `packages/ai/tests/integration/agents/journal.integration.test.ts`
-- [ ] Обновить orchestrator тесты → unified-agent тесты
-- [ ] Запустить unit тесты: `bun test packages/ai/tests/unit/`
-- [ ] Запустить integration тесты: `RUN_LLM_TESTS=1 bun test`
-- [ ] Ручное тестирование (tasks, calendar, settings, digest)
-- [ ] Smoke test в production-like окружении
-- [ ] Коммит: "test: update tests for unified agent"
+### Фаза 4: Тестирование (2-3 часа) ✅ ЗАВЕРШЕНО
+- [x] ~~Удалить `packages/ai/tests/integration/agents/journal.integration.test.ts`~~ - Уже удалено в Фазе 2
+- [x] ~~Обновить orchestrator тесты → unified-agent тесты~~ - Тесты обновлены в Фазах 2-3
+- [x] Запустить unit тесты: `bun test tests/unit/` - ✅ 16 pass, 0 fail
+- [x] Запустить integration тесты: `RUN_LLM_TESTS=1 bun test` - ✅ 1 pass, 2 skip, 0 fail
+- [ ] Ручное тестирование (tasks, calendar, settings, digest) - Требует запуска бота
+- [ ] Smoke test в production-like окружении - Требует deployment
+- [ ] Коммит: "test: verify all tests pass after architecture simplification"
+
+**Результаты автоматических тестов:**
+- Unit тесты: ✅ 16/16 pass (calendar-formatting, encryption, timezone)
+- Integration тесты: ✅ 1/1 pass (orchestrator с gpt-4o-mini)
+- Пропущенные тесты: 2 skip (требуют journal, который удален)
+- TypeScript: ✅ Компилируется без ошибок
+
+**Статус:**
+Автоматические тесты полностью проходят. Ручное тестирование требует запуска бота в dev окружении.
 
 ### Финализация
 - [ ] Обновить README.md с новой архитектурой
