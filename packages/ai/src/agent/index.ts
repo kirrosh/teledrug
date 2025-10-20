@@ -69,24 +69,20 @@ const buildUnifiedSystemPrompt = (context: SimpleChatContext): string => {
 
 **Твои возможности:**
 
-1. **Задачи** - управление списком задач через инструмент manageTasks:
-   - Создавай, обновляй, завершай и удаляй задачи
-   - Всегда создавай отдельную запись в create для каждого нового поручения
-   - Используй id задачи для обновления, завершения или удаления
-   - Переноси задачи при необходимости
-
-2. **Календарь** - работа с событиями:
-   - Создавай события в календаре пользователя
-   - Передавай время в ISO-формате (YYYY-MM-DDTHH:mm:ss±HH:MM)
+1. **Задачи и события** - управление через инструмент manageTasks:
+   - Задачи: укажи title и опционально dueAt (дедлайн)
+   - События: укажи title, startAt и endAt (встреча с точным временем)
+   - Время передавай в ISO-формате (YYYY-MM-DDTHH:mm:ss±HH:MM)
    - Используй часовой пояс пользователя из системных подсказок
-   - Создавай не более одного события за обращение, если не просят явно несколько
+   - Обновляй, завершай и удаляй через id или часть названия
+   - События автоматически синхронизируются с Яндекс.Календарём
 
-3. **Дайджест** - настройки утреннего дайджеста:
+2. **Дайджест** - настройки утреннего дайджеста:
    - Управляй модулями дайджеста (погода, валюты, и т.п.)
    - Включай и отключай нужные модули
    - Обновляй параметры (город для погоды, валюты для отслеживания)
 
-4. **Настройки** - личные настройки пользователя:
+3. **Настройки** - личные настройки пользователя:
    - Меняй город, страну, часовой пояс
    - После смены города обновляй погодный модуль дайджеста
    - Собирай все изменения в одном вызове инструмента
@@ -201,7 +197,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
         );
         const agentMessages = [...nonSystemContextMessages, ...messages];
 
-        const result = yield* Effect.tryPromise({
+        const generateResult = yield* Effect.tryPromise({
           try: () =>
             generateText({
               model: openai(validatedConfig.model || "gpt-4o-mini"),
@@ -209,6 +205,7 @@ const makeAIAgent = (config: AIAgentConfig) =>
                 ? {
                     tools: toolsBundle.tools,
                     toolChoice: "required", // Force model to call at least one tool
+                    maxToolRoundtrips: 1, // Single tool call per turn
                   }
                 : {}),
               maxOutputTokens: validatedConfig.maxTokens,
@@ -225,24 +222,45 @@ const makeAIAgent = (config: AIAgentConfig) =>
         yield* Effect.sync(() => {
           console.log(
             `📨 Agent response:`,
-            result.text ? result.text.slice(0, 200) : "<empty>"
+            generateResult.text ? generateResult.text.slice(0, 200) : "<empty>"
           );
-          if (Array.isArray(result.toolCalls) && result.toolCalls.length > 0) {
+          console.log(`🔢 Steps taken: ${generateResult.steps?.length ?? 0}`);
+          console.log(`⚙️ Finish reason:`, generateResult.finishReason);
+
+          // Log steps details
+          if (generateResult.steps) {
+            for (let i = 0; i < generateResult.steps.length; i++) {
+              const step = generateResult.steps[i];
+              if (!step) continue;
+              console.log(`  Step ${i + 1}:`);
+              if (step.toolCalls && step.toolCalls.length > 0) {
+                console.log(`    🛠️ Tool calls:`, step.toolCalls.map((c) => c.toolName).join(", "));
+              }
+              if (step.toolResults && step.toolResults.length > 0) {
+                console.log(`    📦 Tool results:`, step.toolResults.map((r) => r.toolName).join(", "));
+              }
+            }
+          }
+
+          if (Array.isArray(generateResult.toolCalls) && generateResult.toolCalls.length > 0) {
             console.log(
-              `🛠️ Tool calls:`,
-              result.toolCalls.map((call) => call.toolName).join(", ")
+              `🛠️ Final tool calls (${generateResult.toolCalls.length}):`,
+              generateResult.toolCalls.map((call) => call.toolName).join(", ")
             );
           }
-          if (Array.isArray(result.toolResults) && result.toolResults.length > 0) {
+          if (Array.isArray(generateResult.toolResults) && generateResult.toolResults.length > 0) {
             console.log(
-              `📦 Tool results:`,
-              result.toolResults.map((r) => r.toolName).join(", ")
+              `📦 Final tool results (${generateResult.toolResults.length}):`,
+              generateResult.toolResults.map((r) => r.toolName).join(", ")
             );
+          } else {
+            console.log(`⚠️ No tool results in final result`);
+            console.log(`🔍 Full result keys:`, Object.keys(generateResult));
           }
         });
 
         return {
-          result,
+          result: generateResult,
           toolFormatters: toolsBundle.formatters,
           toolProgressMessages: toolsBundle.progressMessages,
         } satisfies AIAgentResponse;

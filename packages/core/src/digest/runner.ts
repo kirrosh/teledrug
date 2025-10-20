@@ -4,6 +4,7 @@ import {
   FxDigestModule,
   CalendarDigestModule,
   TasksDigestModule,
+  ScheduleDigestModule,
 } from "./modules";
 import { DigestSettingsRepository } from "../services/digest-settings";
 import { TaskRepository } from "../services/task-repository";
@@ -19,8 +20,9 @@ import { normalizeTimezone } from "@teledrug/timezone";
 const MODULES: ReadonlyArray<DigestModuleImpl<any>> = [
   WeatherDigestModule,
   FxDigestModule,
-  CalendarDigestModule,
-  TasksDigestModule,
+  ScheduleDigestModule, // Объединенный модуль задач и событий
+  // CalendarDigestModule, // Заменен на ScheduleDigestModule
+  // TasksDigestModule,    // Заменен на ScheduleDigestModule
 ];
 
 const DEFAULT_SETTINGS: DigestUserSettingsSnapshot = {

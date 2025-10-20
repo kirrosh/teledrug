@@ -33,12 +33,14 @@ const MODULE_META: Record<
   fx: { title: "Курс валют", icon: "💱", accentColor: "#F472B6" },
   calendar: { title: "Календарь", icon: "📅", accentColor: "#A78BFA" },
   tasks: { title: "Задачи", icon: "🧭", accentColor: "#34D399" },
+  schedule: { title: "Расписание", icon: "📅", accentColor: "#A78BFA" },
 };
 
 const MODULE_LABEL_PATTERNS: Partial<Record<DigestModuleId, RegExp>> = {
   weather: /^Погода[:\s-]*/i,
   calendar: /^События на сегодня[:\s-]*/i,
   tasks: /^Задачи на сегодня[:\s-]*/i,
+  schedule: /^Расписание на сегодня[:\s-]*/i,
 };
 
 interface DigestComposition {

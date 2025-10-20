@@ -105,7 +105,7 @@ export type NewUserIntegration = typeof userIntegrations.$inferInsert;
 export type DigestModule = typeof digestModules.$inferSelect;
 export type DigestModuleSetting = typeof digestModuleSettings.$inferSelect;
 
-// Tasks schema
+// Tasks schema - unified tasks and events
 export const tasks = pgTable(
   "tasks",
   {
@@ -114,14 +114,34 @@ export const tasks = pgTable(
       .references(() => users.telegramId, { onDelete: "cascade" })
       .notNull(),
     title: text("title").notNull(),
+    description: text("description"),
     status: varchar("status", { length: 20 }).default("todo").notNull(),
-    dueAt: timestamp("due_at"),
+
+    // Time fields - для задач используем dueAt, для событий startAt/endAt
+    dueAt: timestamp("due_at"), // Deadline for tasks (without specific time)
+    startAt: timestamp("start_at"), // Start time for events
+    endAt: timestamp("end_at"), // End time for events
+
+    // Calendar integration
+    calendarEventId: varchar("calendar_event_id", { length: 255 }), // ID события в календаре
+    calendarEventUrl: text("calendar_event_url"), // Ссылка на событие
+
+    // Telegram integration
+    telegramMessageId: bigint("telegram_message_id", { mode: "number" }), // ID сообщения
+    telegramChatId: bigint("telegram_chat_id", { mode: "number" }), // ID чата
+
+    // Metadata
+    location: text("location"),
+    metadata: jsonb("metadata"), // Дополнительные данные (attendees, organizer, etc)
+
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => ({
     userStatusIdx: index("idx_tasks_user_status").on(table.userId, table.status),
     userDueIdx: index("idx_tasks_user_due").on(table.userId, table.dueAt),
+    userStartIdx: index("idx_tasks_user_start").on(table.userId, table.startAt),
+    calendarEventIdx: index("idx_tasks_calendar_event").on(table.calendarEventId),
   })
 );
 

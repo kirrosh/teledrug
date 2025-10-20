@@ -5,11 +5,40 @@ import { z } from "zod";
 import type { ToolResultFormatter } from "../types/integrations";
 import { TaskRepository } from "../services/task-repository";
 import type { TaskRepository as TaskRepositoryService } from "../services/task-repository";
+import { CalendarSyncService } from "../services/calendar-sync";
 import type { Task } from "@teledrug/db";
+import { isEvent } from "./utils";
 
 const AddTaskSchema = z.object({
   title: z.string().min(1),
-  dueAt: z.string().datetime().optional(),
+  description: z.string().optional(),
+  dueAt: z.string().datetime({ offset: true }).optional(),
+  startAt: z.string().datetime({ offset: true }).optional(),
+  endAt: z.string().datetime({ offset: true }).optional(),
+  location: z.string().optional(),
+  isEvent: z.boolean().optional(),
+}).superRefine((value, ctx) => {
+  // Если это событие, должны быть startAt и endAt
+  if (value.isEvent && (!value.startAt || !value.endAt)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Для события нужно указать время начала (startAt) и окончания (endAt)",
+    });
+  }
+  // Если указан startAt, должен быть и endAt
+  if (value.startAt && !value.endAt) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Если указано время начала, укажите также время окончания",
+    });
+  }
+  // Если указан endAt, должен быть и startAt
+  if (value.endAt && !value.startAt) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Если указано время окончания, укажите также время начала",
+    });
+  }
 });
 
 const IdentifyTaskBaseSchema = z.object({
@@ -34,8 +63,12 @@ const IdentifyTaskSchema = IdentifyTaskBaseSchema.superRefine(ensureIdentifier);
 const UpdateTaskSchema = IdentifyTaskBaseSchema.extend({
   set: z.object({
     title: z.string().min(1).optional(),
-    dueAt: z.union([z.string().datetime(), z.null()]).optional(),
+    description: z.union([z.string(), z.null()]).optional(),
+    dueAt: z.union([z.string().datetime({ offset: true }), z.null()]).optional(),
+    startAt: z.union([z.string().datetime({ offset: true }), z.null()]).optional(),
+    endAt: z.union([z.string().datetime({ offset: true }), z.null()]).optional(),
     status: z.enum(["todo", "done", "cancelled"]).optional(),
+    location: z.union([z.string(), z.null()]).optional(),
   }),
 }).superRefine((value, ctx) => {
   ensureIdentifier(value, ctx);
@@ -44,6 +77,21 @@ const UpdateTaskSchema = IdentifyTaskBaseSchema.extend({
       code: z.ZodIssueCode.custom,
       path: ["set"],
       message: "Нужно указать изменения",
+    });
+  }
+  // Проверка что если обновляем startAt/endAt, они оба указаны
+  if (value.set.startAt && !value.set.endAt) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["set", "endAt"],
+      message: "Если указываешь время начала, укажи и время окончания",
+    });
+  }
+  if (value.set.endAt && !value.set.startAt) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["set", "startAt"],
+      message: "Если указываешь время окончания, укажи и время начала",
     });
   }
 });
@@ -57,7 +105,7 @@ const RescheduleTaskSchema = IdentifyTaskBaseSchema.extend({
       z.string().regex(/^\+\d{1,3}days$/i),
     ])
     .optional(),
-  dueAt: z.union([z.string().datetime(), z.null()]).optional(),
+  dueAt: z.union([z.string().datetime({ offset: true }), z.null()]).optional(),
 }).superRefine((value, ctx) => {
   ensureIdentifier(value, ctx);
   if (value.shift === undefined && value.dueAt === undefined) {
@@ -99,8 +147,8 @@ const ListTasksSchema = z
     status: z
       .union([TaskStatusEnum, z.array(TaskStatusEnum).min(1).max(3)])
       .optional(),
-    start: z.string().datetime().optional(),
-    end: z.string().datetime().optional(),
+    start: z.string().datetime({ offset: true }).optional(),
+    end: z.string().datetime({ offset: true }).optional(),
     includeWithoutDue: z.boolean().optional(),
     limit: z.number().int().min(1).max(200).default(50),
   })
@@ -334,25 +382,80 @@ const applyManageTasks = (
 
     for (const createInput of input.create) {
       try {
+        // Парсим даты
         const dueAtValue = createInput.dueAt
           ? new Date(createInput.dueAt)
           : null;
+        const startAtValue = createInput.startAt
+          ? new Date(createInput.startAt)
+          : null;
+        const endAtValue = createInput.endAt
+          ? new Date(createInput.endAt)
+          : null;
+
+        // Валидация дат
         if (dueAtValue && Number.isNaN(dueAtValue.getTime())) {
           errors.push(
             `Создание задачи "${createInput.title}": некорректная дата ${createInput.dueAt}`
           );
           continue;
         }
+        if (startAtValue && Number.isNaN(startAtValue.getTime())) {
+          errors.push(
+            `Создание задачи "${createInput.title}": некорректное время начала ${createInput.startAt}`
+          );
+          continue;
+        }
+        if (endAtValue && Number.isNaN(endAtValue.getTime())) {
+          errors.push(
+            `Создание задачи "${createInput.title}": некорректное время окончания ${createInput.endAt}`
+          );
+          continue;
+        }
+
+        // Проверка что startAt < endAt
+        if (startAtValue && endAtValue && startAtValue.getTime() >= endAtValue.getTime()) {
+          errors.push(
+            `Создание задачи "${createInput.title}": время начала должно быть раньше времени окончания`
+          );
+          continue;
+        }
+
         const task = yield* repo.create({
           userId,
           title: createInput.title.trim(),
+          description: createInput.description?.trim() ?? null,
           dueAt: dueAtValue,
+          startAt: startAtValue,
+          endAt: endAtValue,
+          location: createInput.location?.trim() ?? null,
         });
+
         summary.created.push({
           id: task.id,
           title: task.title,
           dueAt: task.dueAt ? new Date(task.dueAt).toISOString() : null,
         });
+
+        // Синхронизируем с календарем если это событие
+        if (isEvent(task)) {
+          console.log(`📅 Task #${task.id} is an event, attempting calendar sync...`);
+          const calendarSync = yield* Effect.serviceOption(CalendarSyncService);
+          if (calendarSync._tag === "Some") {
+            const synced = yield* calendarSync.value.syncTaskToCalendar(task).pipe(
+              Effect.catchAll((error) => {
+                console.error(`❌ Calendar sync failed for task #${task.id}:`, error);
+                return Effect.succeed(false);
+              })
+            );
+            if (synced) {
+              console.log(`✅ Task #${task.id} synced to calendar`);
+              notes.push(`Событие "${task.title}" синхронизировано с Яндекс.Календарём`);
+            }
+          } else {
+            console.log(`⏭️ CalendarSyncService not available, skipping sync`);
+          }
+        }
       } catch (cause) {
         const message =
           cause instanceof Error && cause.message
@@ -433,6 +536,20 @@ const applyManageTasks = (
           ? null
           : new Date(updateInput.set.dueAt);
 
+      const startAt =
+        updateInput.set.startAt === undefined
+          ? undefined
+          : updateInput.set.startAt === null
+          ? null
+          : new Date(updateInput.set.startAt);
+
+      const endAt =
+        updateInput.set.endAt === undefined
+          ? undefined
+          : updateInput.set.endAt === null
+          ? null
+          : new Date(updateInput.set.endAt);
+
       if (dueAt instanceof Date && Number.isNaN(dueAt.getTime())) {
         errors.push(
           `Обновление задачи: некорректная дата ${updateInput.set.dueAt}`
@@ -440,11 +557,36 @@ const applyManageTasks = (
         continue;
       }
 
+      if (startAt instanceof Date && Number.isNaN(startAt.getTime())) {
+        errors.push(
+          `Обновление задачи: некорректное время начала ${updateInput.set.startAt}`
+        );
+        continue;
+      }
+
+      if (endAt instanceof Date && Number.isNaN(endAt.getTime())) {
+        errors.push(
+          `Обновление задачи: некорректное время окончания ${updateInput.set.endAt}`
+        );
+        continue;
+      }
+
+      if (startAt instanceof Date && endAt instanceof Date && startAt.getTime() >= endAt.getTime()) {
+        errors.push(
+          `Обновление задачи: время начала должно быть раньше времени окончания`
+        );
+        continue;
+      }
+
       try {
         const updated = yield* repo.update(original.id, userId, {
           title: updateInput.set.title,
+          description: updateInput.set.description,
           dueAt,
+          startAt,
+          endAt,
           status: updateInput.set.status,
+          location: updateInput.set.location,
         });
 
         const changes: string[] = [];
@@ -776,6 +918,7 @@ export const createTaskTools = (
 ) =>
   Effect.gen(function* () {
     const repo = yield* TaskRepository;
+    const calendarSyncOption = yield* Effect.serviceOption(CalendarSyncService);
 
     const rawTimezone = options.userSettings?.timezone?.trim();
     const rawLocale = options.userSettings?.locale?.trim();
@@ -814,10 +957,11 @@ export const createTaskTools = (
 
     const manageTool = tool({
       description:
-        "Синхронизирует список задач: передай списки на создание, обновление, завершение, удаление или перенос.",
+        "Синхронизирует список задач и событий: создавай задачи (с dueAt) или события (с startAt/endAt), обновляй, завершай, удаляй или переноси их. Задача - это дело с дедлайном, событие - встреча с конкретным временем.",
       inputSchema: ManageTasksSchema,
       execute: async (raw) => {
         const input = ManageTasksSchema.parse(raw);
+
         const effect = applyManageTasks(repo, userId, input, formatOptions).pipe(
           Effect.catchAll((cause) =>
             Effect.succeed({
@@ -830,15 +974,23 @@ export const createTaskTools = (
               ],
               formatOptions,
             } satisfies ManageTasksResult)
-          )
+          ),
+          // Provide repository and calendar sync service for execution
+          Effect.provideService(TaskRepository, repo)
         );
-        return await Effect.runPromise(effect);
+
+        // Provide calendar sync if available
+        const effectWithCalendar = calendarSyncOption._tag === "Some"
+          ? effect.pipe(Effect.provideService(CalendarSyncService, calendarSyncOption.value))
+          : effect;
+
+        return await Effect.runPromise(effectWithCalendar);
       },
     });
 
     const listTool = tool({
       description:
-        "Возвращает задачи пользователя по заданным фильтрам: статус, интервал дат, лимит выборки.",
+        "Возвращает задачи и события пользователя по заданным фильтрам: статус, интервал дат, лимит выборки. Включает как задачи с дедлайнами, так и события с конкретным временем.",
       inputSchema: ListTasksSchema,
       execute: async (raw) => {
         const input: ListTasksInput = ListTasksSchema.parse(raw);
@@ -914,6 +1066,18 @@ export const createTaskTools = (
           `ISO-время сейчас: ${isoNow}.`,
           `Предпочитаемая локаль: ${resolvedLocale}.`,
           "При планировании учитывай таймзону и возвращай даты в ISO-формате.",
+          "",
+          "ВАЖНО: Единая система управления задачами и событиями:",
+          "• Используй ТОЛЬКО инструмент manageTasks для создания задач И событий",
+          "• Задача (task): укажи title и опционально dueAt (дедлайн без точного времени)",
+          "• Событие (event): укажи title, startAt и endAt (встреча с конкретным временем)",
+          "• Для событий ОБЯЗАТЕЛЬНО указывай оба поля: startAt И endAt",
+          "• Дополнительно можно указать: location (место), description (описание)",
+          "",
+          "Автоматическая синхронизация:",
+          "• События с startAt/endAt автоматически синхронизируются с Яндекс.Календарём пользователя",
+          "• НЕ используй отдельные инструменты для работы с календарем - всё через manageTasks",
+          "• События появятся и в списке задач, и в календаре пользователя",
         ]
           .filter(Boolean)
           .join("\n"),
@@ -924,13 +1088,25 @@ export const createTaskTools = (
       contextMessages.push({
         role: "system",
         content: [
-          "Вот актуальные незавершённые задачи пользователя.",
+          "Вот актуальные незавершённые задачи и события пользователя.",
           "Используй их, чтобы закрывать, обновлять или переносить элементы.",
-          "Формат: #id — название (срок).",
+          "Формат: #id — название (срок/время).",
           openTasksForContext
             .map((task) => {
-              const due = formatDueDate(task.dueAt, formatOptions);
               const title = task.title.replace(/\s+/g, " ").trim();
+              // Если это событие - показываем время
+              if (task.startAt && task.endAt) {
+                const start = new Date(task.startAt);
+                const end = new Date(task.endAt);
+                const timeFormatter = new Intl.DateTimeFormat(resolvedLocale, {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  timeZone: resolvedTimezone,
+                });
+                return `#${task.id} — ${title} (📅 ${timeFormatter.format(start)}–${timeFormatter.format(end)})`;
+              }
+              // Если задача с дедлайном
+              const due = formatDueDate(task.dueAt, formatOptions);
               return `#${task.id} — ${title}${
                 due !== "—" ? ` (до ${due})` : ""
               }`;

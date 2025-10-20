@@ -18,6 +18,7 @@ import { DigestSettingsRepository } from "./digest-settings";
 import { createTaskTools } from "../tasks/tools";
 import { createUserSettingsTools } from "../user/tools";
 import { TaskRepository, TaskRepositoryLive } from "./task-repository";
+import { CalendarSyncServiceLive } from "./calendar-sync";
 
 const toNumericUserId = (userId: string | number) => {
   if (typeof userId === "number") {
@@ -138,10 +139,16 @@ const makeIntegrationRegistry = Effect.gen(function* () {
           )
         );
 
+      // Create CalendarSyncService layer with UserRepository
+      const calendarSyncLayer = CalendarSyncServiceLive.pipe(
+        Layer.provide(Layer.succeed(UserRepository, userRepository))
+      );
+
       const taskToolsBundle = yield* createTaskTools(numericUserId, {
         userSettings,
       }).pipe(
         Effect.provide(TaskRepositoryLive),
+        Effect.provide(calendarSyncLayer),
         Effect.mapError(
           (cause) =>
             new IntegrationError({
@@ -209,45 +216,11 @@ const makeIntegrationRegistry = Effect.gen(function* () {
 
         switch (integration.integrationType) {
           case "YandexCalendar": {
-            if (
-              interactionType !== "TEXT" &&
-              interactionType !== "VOICE" &&
-              interactionType !== "IMAGE"
-            ) {
-              yield* Effect.sync(() =>
-                console.log(
-                  `⚖️ Registry: skipping YandexCalendar tools for unsupported interaction type ${interactionType}`
-                )
-              );
-              break;
-            }
-
-            const yandexTools = YandexCalendarIntegration.createTools({
-              credentials: credentials as YandexCredentials,
-              encryptedCredentials: {
-                encrypted: integration.credentialsEncrypted,
-                iv: integration.credentialsIv,
-                tag: integration.credentialsTag,
-              },
-              userTimezone: userSettings.timezone,
-              userLocale: userSettings.locale,
-            });
-
-            combined = mergeBundles(combined, {
-              tools: { ...yandexTools.tools },
-              formatters: { ...yandexTools.formatters },
-              progressMessages: {
-                ...(yandexTools.progressMessages ?? {}),
-              },
-              ...(yandexTools.contextMessages
-                ? { contextMessages: [...yandexTools.contextMessages] }
-                : {}),
-            });
+            // Яндекс.Календарь работает в фоновом режиме, инструменты не предоставляются LLM
+            // Синхронизация происходит автоматически при создании событий через manageTasks
             yield* Effect.sync(() =>
               console.log(
-                `✅ Registry: added ${
-                  Object.keys(yandexTools.tools).length
-                } YandexCalendar tool(s)`
+                `📅 Registry: YandexCalendar integration enabled for user ${numericUserId} (background sync only, no LLM tools)`
               )
             );
             break;

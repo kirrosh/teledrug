@@ -50,6 +50,13 @@
       "when": 1758875988636,
       "tag": "0006_backfill_default_user_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1760954528271,
+      "tag": "0007_ordinary_gideon",
+      "breakpoints": true
     }
   ]
 }

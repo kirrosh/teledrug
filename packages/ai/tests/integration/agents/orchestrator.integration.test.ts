@@ -60,7 +60,11 @@ const ManageTasksSchema = z.object({
     .array(
       z.object({
         title: z.string().min(1),
-        dueAt: z.string().optional().nullable(),
+        dueAt: z.string().datetime({ offset: true }).optional().nullable(),
+        startAt: z.string().datetime({ offset: true }).optional().nullable(),
+        endAt: z.string().datetime({ offset: true }).optional().nullable(),
+        location: z.string().optional().nullable(),
+        description: z.string().optional().nullable(),
       })
     )
     .default([]),
@@ -71,7 +75,7 @@ const ManageTasksSchema = z.object({
         title: z.string().optional(),
         set: z.object({
           title: z.string().optional(),
-          dueAt: z.string().optional().nullable(),
+          dueAt: z.string().datetime({ offset: true }).optional().nullable(),
           status: z.string().optional(),
         }),
       })
@@ -98,7 +102,7 @@ const ManageTasksSchema = z.object({
       z.object({
         id: z.number().int().positive().optional(),
         title: z.string().optional(),
-        dueAt: z.string().optional().nullable(),
+        dueAt: z.string().datetime({ offset: true }).optional().nullable(),
         shift: z.string().optional(),
       })
     )
@@ -659,5 +663,162 @@ describeLLM("Orchestrator", () => {
       expect(Number.isNaN(Date.parse(calendarPayload.startDate))).toBeFalse();
     },
     { timeout: 30000, skip: true }
+  );
+
+  testLLM(
+    "creates event via manageTasks with startAt and endAt",
+    async () => {
+      const openaiApiKey = ensureOpenAIKey();
+
+      const context = buildSimpleContext(
+        "Создай событие Лабковский 26 ноября в 19:00, продолжительность 1.5 часа",
+        { userId: 919 }
+      );
+
+      const tasksCalls: Array<z.infer<typeof ManageTasksSchema>> = [];
+
+      const manageTasks = tool({
+        description:
+          "Управляет задачами и событиями: создавай задачи (с dueAt) или события (с startAt/endAt).",
+        inputSchema: ManageTasksSchema,
+        execute: async (input) => {
+          tasksCalls.push(input);
+          const notes: string[] = [];
+
+          for (const item of input.create) {
+            if (item.startAt && item.endAt) {
+              notes.push(`Событие "${item.title}" синхронизировано с Яндекс.Календарём`);
+            }
+          }
+
+          return {
+            success: true,
+            summary: {
+              created: input.create.map((item) => ({
+                id: Math.floor(Math.random() * 1000),
+                title: item.title,
+                startAt: item.startAt,
+                endAt: item.endAt,
+              })),
+            },
+            notes,
+          };
+        },
+      });
+
+      const tasksBundle: IntegrationToolsBundle = {
+        tools: {
+          manageTasks,
+        },
+        formatters: {},
+        progressMessages: {},
+        contextMessages: [
+          {
+            role: "system",
+            content: [
+              "ВАЖНО: Единая система управления задачами и событиями:",
+              "• Используй ТОЛЬКО инструмент manageTasks для создания задач И событий",
+              "• Задача (task): укажи title и опционально dueAt (дедлайн без точного времени)",
+              "• Событие (event): укажи title, startAt и endAt (встреча с конкретным временем)",
+              "• Для событий ОБЯЗАТЕЛЬНО указывай оба поля: startAt И endAt",
+              "• События с startAt/endAt автоматически синхронизируются с Яндекс.Календарём пользователя",
+              "• Используй ISO-формат для дат: YYYY-MM-DDTHH:mm:ss+03:00 (часовой пояс Europe/Moscow)",
+            ].join("\n"),
+          },
+        ],
+      };
+
+      const registry: IntegrationRegistryService = {
+        getToolsForUser: () => Effect.succeed(tasksBundle),
+      };
+
+      const config: AIAgentConfig = {
+        openaiApiKey,
+        model: getModelName(),
+        maxTokens: 500,
+        userId: context.userId,
+      };
+
+      const program = Effect.gen(function* () {
+        const agent = yield* AIAgent;
+        return yield* agent.processText(context.userId, context.messageContent);
+      }).pipe(
+        Effect.provideService(IntegrationRegistry, registry),
+        Effect.provide(AIAgentLive(config))
+      );
+
+      const outcome = await Effect.runPromise(
+        program.pipe(
+          Effect.map((response) => ({ _tag: "ok" as const, response })),
+          Effect.catchAll((error) => {
+            const isNetwork =
+              isNetworkError(error) ||
+              (error instanceof Error &&
+                /No subagent produced tool results/.test(error.message));
+            return isNetwork
+              ? Effect.succeed({ _tag: "network" as const, error })
+              : Effect.fail(error);
+          })
+        )
+      );
+
+      if (outcome._tag === "network") {
+        console.warn(
+          "[orchestrator-event-creation] skipping due to network error",
+          outcome.error
+        );
+        return;
+      }
+
+      const response = outcome.response;
+
+      // Check that manageTasks was called
+      expect(response.result).toBeDefined();
+      expect(tasksCalls.length).toBeGreaterThan(0);
+
+      const tasksPayload = tasksCalls[0]!;
+      expect(tasksPayload.create.length).toBeGreaterThan(0);
+
+      const createdEvent = tasksPayload.create[0]!;
+
+      // Verify event has both startAt and endAt
+      expect(createdEvent.startAt).toBeDefined();
+      expect(createdEvent.endAt).toBeDefined();
+      expect(createdEvent.startAt).not.toBeNull();
+      expect(createdEvent.endAt).not.toBeNull();
+
+      // Verify dates are valid ISO format
+      expect(Number.isNaN(Date.parse(createdEvent.startAt!))).toBeFalse();
+      expect(Number.isNaN(Date.parse(createdEvent.endAt!))).toBeFalse();
+
+      // Verify title contains "Лабковский"
+      expect(createdEvent.title.toLowerCase()).toContain("лабков");
+
+      // Verify time is correct (19:00 Moscow time = 16:00 UTC, as timezone is +03:00)
+      const startDate = new Date(createdEvent.startAt!);
+      const endDate = new Date(createdEvent.endAt!);
+
+      // Check time in Moscow timezone
+      const moscowTimeStr = startDate.toLocaleString("ru-RU", {
+        timeZone: "Europe/Moscow",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      expect(moscowTimeStr).toBe("19:00");
+
+      // Verify duration is approximately 1.5 hours
+      const durationMs = endDate.getTime() - startDate.getTime();
+      const durationHours = durationMs / (1000 * 60 * 60);
+      expect(durationHours).toBeGreaterThanOrEqual(1.4);
+      expect(durationHours).toBeLessThanOrEqual(1.6);
+
+      console.log("✅ Event created successfully:", {
+        title: createdEvent.title,
+        startAt: createdEvent.startAt,
+        endAt: createdEvent.endAt,
+        duration: `${durationHours.toFixed(1)} hours`,
+      });
+    },
+    { timeout: 30000 }
   );
 });
