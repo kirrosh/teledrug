@@ -760,17 +760,28 @@ bun run start
 - [ ] Применить миграцию на dev БД
 - [ ] Коммит: "refactor: remove journal functionality"
 
-### Фаза 2: Unified Agent (4-5 часов)
-- [ ] Создать `packages/ai/src/agent/unified-agent.ts`
-- [ ] Переписать system prompt
-- [ ] Упростить IntegrationRegistry.getAllTools()
-- [ ] Обновить TelegramClient для работы с unified agent
-- [ ] Переименовать старый index.ts в orchestrator-OLD.ts
-- [ ] Обновить exports в packages/ai/src/index.ts
-- [ ] Удалить `packages/core/src/services/ai-agent.ts`
-- [ ] Обновить layers в main.ts
-- [ ] Запустить TypeScript проверку: `bun run typecheck`
-- [ ] Коммит: "refactor: replace orchestrator with unified agent"
+### Фаза 2: Unified Agent (4-5 часов) ✅ ЗАВЕРШЕНО
+- [x] ~~Создать `packages/ai/src/agent/unified-agent.ts`~~ - Заменен Agent на generateText
+- [x] Переписать system prompt - Сохранен buildUnifiedSystemPrompt
+- [x] ~~Упростить IntegrationRegistry.getAllTools()~~ - Уже есть getToolsForUser
+- [x] ~~Обновить TelegramClient для работы с unified agent~~ - Не требуется
+- [x] ~~Переименовать старый index.ts в orchestrator-OLD.ts~~ - Обновлен in-place
+- [x] ~~Обновить exports в packages/ai/src/index.ts~~ - Уже актуальны
+- [x] ~~Удалить `packages/core/src/services/ai-agent.ts`~~ - Не было в коде
+- [x] ~~Обновить layers в main.ts~~ - Не требуется
+- [x] Запустить TypeScript проверку: `bun tsc --noEmit` - ✅ PASS
+- [x] Коммит: "refactor: replace Agent with generateText for GPT-5 compatibility"
+
+**Что сделано:**
+- Заменил `Experimental_Agent` на `generateText` для лучшей совместимости
+- Объединил системные контекстные сообщения в единый system prompt
+- Исправил TypeScript ошибки в тестах (mergeBundles, CoreMessage import)
+- Создал `guardToolContext()` для правильной работы с guard-инструментами
+- Проверил работу с AI SDK 5 - используется правильно (inputSchema)
+
+**Результаты тестирования:**
+- ✅ gpt-4o-mini: Все тесты проходят (1 pass, 14 expect())
+- ⚠️ gpt-5-mini/nano: Не работают со сложными промптами (рекомендуется gpt-4o-mini)
 
 ### Фаза 3: Упрощение (1-2 часа)
 - [ ] Упростить структуру layers
