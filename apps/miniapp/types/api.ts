@@ -25,19 +25,3 @@ export interface TasksResponse {
   tasks: Task[];
 }
 
-export interface JournalEntry {
-  id: number;
-  title: string;
-  content: string;
-  entryDate: string;
-  mood: string;
-  energy: string;
-  tags: string[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface JournalResponse {
-  entries: JournalEntry[];
-}
-

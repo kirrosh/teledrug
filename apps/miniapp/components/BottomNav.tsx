@@ -5,7 +5,6 @@ import { useTransitionRouter } from "next-view-transitions";
 
 const NAV_ITEMS = [
   { href: "/tasks", label: "Задачи", icon: "🗂" },
-  { href: "/journal", label: "Журнал", icon: "📓" },
 ];
 
 export const BottomNav = () => {
