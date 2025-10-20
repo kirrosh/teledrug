@@ -137,3 +137,13 @@ export const forceToolContext = (
       .join("\n"),
   },
 ];
+
+export const guardToolContext = (
+  toolName: string,
+  hint: string
+): ReadonlyArray<CoreMessage> => [
+  {
+    role: "system",
+    content: `Инструмент ${toolName}: ${hint}`,
+  },
+];

@@ -1,6 +1,6 @@
 import { Effect, Context, Layer, Schema, Cache, Duration } from "effect";
 import {
-  Experimental_Agent as Agent,
+  generateText,
   type CoreMessage,
   type GenerateTextResult,
 } from "ai";
@@ -182,23 +182,35 @@ const makeAIAgent = (config: AIAgentConfig) =>
           console.log(`🛠️ Available tools: ${toolNames.join(", ")}`);
         }
 
-        const systemPrompt = buildUnifiedSystemPrompt(validatedContext);
+        const baseSystemPrompt = buildUnifiedSystemPrompt(validatedContext);
         const contextMessages = toolsBundle.contextMessages ?? [];
-        const agentMessages = [...contextMessages, ...messages];
 
-        const agent = new Agent({
-          model: openai(validatedConfig.model || "gpt-4o-mini"),
-          ...(toolNames.length > 0
-            ? {
-                tools: toolsBundle.tools,
-              }
-            : {}),
-          maxOutputTokens: validatedConfig.maxTokens,
-        });
+        // Extract system messages from contextMessages and merge into system prompt
+        const systemContexts = contextMessages
+          .filter((msg) => msg.role === "system")
+          .map((msg) => msg.content)
+          .filter((content): content is string => typeof content === "string");
+
+        const systemPrompt = systemContexts.length > 0
+          ? [baseSystemPrompt, ...systemContexts].join("\n\n")
+          : baseSystemPrompt;
+
+        // Keep only non-system messages for the messages array
+        const nonSystemContextMessages = contextMessages.filter(
+          (msg) => msg.role !== "system"
+        );
+        const agentMessages = [...nonSystemContextMessages, ...messages];
 
         const result = yield* Effect.tryPromise({
           try: () =>
-            agent.generate({
+            generateText({
+              model: openai(validatedConfig.model || "gpt-4o-mini"),
+              ...(toolNames.length > 0
+                ? {
+                    tools: toolsBundle.tools,
+                  }
+                : {}),
+              maxOutputTokens: validatedConfig.maxTokens,
               system: systemPrompt,
               messages: agentMessages,
             }),

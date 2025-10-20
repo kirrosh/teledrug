@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { Effect } from "effect";
-import { tool } from "ai";
+import { tool, type CoreMessage } from "ai";
 import { z } from "zod";
 
 import { AIAgent, AIAgentLive } from "../../../src/agent";
@@ -17,10 +17,43 @@ import {
   describeLLM,
   ensureOpenAIKey,
   forceToolContext,
+  guardToolContext,
   getModelName,
   isNetworkError,
   testLLM,
 } from "./harness";
+
+// Helper to merge bundles for unified agent
+const mergeBundles = (
+  bundles: Record<string, IntegrationToolsBundle>
+): IntegrationToolsBundle => {
+  let tools = {};
+  let formatters = {};
+  let progressMessages = {};
+  let contextMessages: CoreMessage[] = [];
+
+  for (const bundle of Object.values(bundles)) {
+    tools = { ...tools, ...bundle.tools };
+    formatters = { ...formatters, ...bundle.formatters };
+    progressMessages = {
+      ...progressMessages,
+      ...bundle.progressMessages,
+    };
+    if (bundle.contextMessages) {
+      contextMessages = [
+        ...contextMessages,
+        ...bundle.contextMessages,
+      ];
+    }
+  }
+
+  return {
+    tools,
+    formatters,
+    progressMessages,
+    ...(contextMessages.length > 0 ? { contextMessages } : {}),
+  };
+};
 
 const ManageTasksSchema = z.object({
   create: z
@@ -155,7 +188,12 @@ describeLLM("Orchestrator", () => {
 
       const registry: IntegrationRegistryService = {
         getToolsForUser: () =>
-          Effect.fail(new IntegrationError({ message: "not implemented" })),
+          Effect.succeed(
+            mergeBundles({
+              journal: journalBundle,
+              tasks: tasksBundle,
+            })
+          ),
         getDomainToolsForUser: () =>
           Effect.succeed({
             journal: journalBundle,
@@ -352,7 +390,7 @@ describeLLM("Orchestrator", () => {
         },
         formatters: {},
         progressMessages: {},
-        contextMessages: forceToolContext(
+        contextMessages: guardToolContext(
           "manageTasks",
           "Не создавай задач, если пользователь об этом не просит."
         ),
@@ -372,7 +410,7 @@ describeLLM("Orchestrator", () => {
         },
         formatters: {},
         progressMessages: {},
-        contextMessages: forceToolContext(
+        contextMessages: guardToolContext(
           "updateUserSettings",
           "Не меняй настройки без прямого запроса."
         ),
@@ -380,7 +418,15 @@ describeLLM("Orchestrator", () => {
 
       const registry: IntegrationRegistryService = {
         getToolsForUser: () =>
-          Effect.fail(new IntegrationError({ message: "not implemented" })),
+          Effect.succeed(
+            mergeBundles({
+              journal: journalBundle,
+              calendar: calendarBundle,
+              tasks: tasksGuardBundle,
+              digest: digestGuardBundle,
+              settings: settingsGuardBundle,
+            })
+          ),
         getDomainToolsForUser: () =>
           Effect.succeed({
             journal: journalBundle,
@@ -453,7 +499,8 @@ describeLLM("Orchestrator", () => {
       expect(Number.isNaN(Date.parse(calendarPayload.start))).toBeFalse();
       expect(Number.isNaN(Date.parse(calendarPayload.end))).toBeFalse();
       if (calendarPayload.location) {
-        expect(calendarPayload.location.toLowerCase()).toContain("dubai");
+        const location = calendarPayload.location.toLowerCase();
+        expect(location.includes("dubai") || location.includes("дубай") || location.includes("дуба")).toBeTrue();
       }
 
       // Check that only relevant tools were invoked
@@ -556,7 +603,12 @@ describeLLM("Orchestrator", () => {
 
       const registry: IntegrationRegistryService = {
         getToolsForUser: () =>
-          Effect.fail(new IntegrationError({ message: "not implemented" })),
+          Effect.succeed(
+            mergeBundles({
+              tasks: tasksBundle,
+              calendar: calendarBundle,
+            })
+          ),
         getDomainToolsForUser: () =>
           Effect.succeed({
             tasks: tasksBundle,
