@@ -15,7 +15,6 @@ export interface DailyDigestMetadata {
 
 export interface DailyDigestImagePayload {
   readonly dateLabel: string;
-  readonly greeting: string;
   readonly metadata?: DailyDigestMetadata;
   readonly footnote?: string;
 }
@@ -46,13 +45,9 @@ const renderMetadata = (metadata: DailyDigestMetadata | undefined) => {
   return (
     <div
       style={{
-        position: "absolute",
-        top: 48,
-        right: 72,
         display: "flex",
-        flexDirection: "column",
-        gap: 12,
-        alignItems: "flex-end",
+        gap: 16,
+        marginTop: 24,
       }}
     >
       {metadata.weather && (
@@ -60,17 +55,15 @@ const renderMetadata = (metadata: DailyDigestMetadata | undefined) => {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 8,
-            padding: "12px 20px",
+            padding: "14px 24px",
             background: "rgba(17, 27, 42, 0.8)",
             borderRadius: 16,
             border: "1px solid rgba(148, 163, 184, 0.2)",
           }}
         >
-          <span style={{ fontSize: 24 }}>🌤️</span>
           <span
             style={{
-              fontSize: 20,
+              fontSize: 22,
               color: "rgba(248, 250, 252, 0.9)",
             }}
           >
@@ -83,17 +76,15 @@ const renderMetadata = (metadata: DailyDigestMetadata | undefined) => {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 8,
-            padding: "12px 20px",
+            padding: "14px 24px",
             background: "rgba(17, 27, 42, 0.8)",
             borderRadius: 16,
             border: "1px solid rgba(148, 163, 184, 0.2)",
           }}
         >
-          <span style={{ fontSize: 24 }}>💱</span>
           <span
             style={{
-              fontSize: 20,
+              fontSize: 22,
               color: "rgba(248, 250, 252, 0.9)",
             }}
           >
@@ -132,8 +123,6 @@ export const renderDailyDigestImage = async (
           overflow: "hidden",
         }}
       >
-        {renderMetadata(payload.metadata)}
-
         <div
           style={{
             display: "flex",
@@ -172,25 +161,7 @@ export const renderDailyDigestImage = async (
             />
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 24,
-              maxWidth: "70%",
-            }}
-          >
-            <span
-              style={{
-                fontSize: 64,
-                fontWeight: 700,
-                color: "rgba(248, 250, 252, 0.95)",
-                lineHeight: 1.2,
-              }}
-            >
-              {payload.greeting}
-            </span>
-          </div>
+          {renderMetadata(payload.metadata)}
 
           {payload.footnote ? (
             <div

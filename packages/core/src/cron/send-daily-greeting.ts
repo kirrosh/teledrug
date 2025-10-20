@@ -19,13 +19,6 @@ const TARGET_HOUR = 10;
 const FORCE_ALL_FLAG = "--all";
 const FORCE_ALL_ALT_FLAG = "--force-all";
 
-const GREETING_VARIANTS = [
-  "Доброе утро! 🌞",
-  "С добрым утром! ☀️",
-  "Отличного дня! 🌅",
-  "Доброго утра! ✨",
-];
-
 interface DigestComposition {
   readonly imagePayload: DailyDigestImagePayload;
   readonly scheduleText: string | null;
@@ -88,11 +81,8 @@ const buildImagePayload = (
   const weatherInfo = weatherModule ? extractCompactInfo(weatherModule.text, /^Погода[:\s-]*/i) : undefined;
   const fxInfo = fxModule ? extractCompactInfo(fxModule.text, /^Курс валют[:\s-]*/i) : undefined;
 
-  const randomGreeting = GREETING_VARIANTS[Math.floor(Math.random() * GREETING_VARIANTS.length)];
-
   return {
     dateLabel: formatDateLabel(date, locale, timeZone),
-    greeting: randomGreeting!,
     metadata: (weatherInfo || fxInfo) ? { weather: weatherInfo, fx: fxInfo } : undefined,
     footnote: `Сформировано в ${formatTimeLabel(date, locale, timeZone)} • TeleDrug`,
   };
