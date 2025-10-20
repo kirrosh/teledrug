@@ -194,11 +194,6 @@ describeLLM("Orchestrator", () => {
               tasks: tasksBundle,
             })
           ),
-        getDomainToolsForUser: () =>
-          Effect.succeed({
-            journal: journalBundle,
-            tasks: tasksBundle,
-          }),
       };
 
       const config: AIAgentConfig = {
@@ -427,14 +422,6 @@ describeLLM("Orchestrator", () => {
               settings: settingsGuardBundle,
             })
           ),
-        getDomainToolsForUser: () =>
-          Effect.succeed({
-            journal: journalBundle,
-            calendar: calendarBundle,
-            tasks: tasksGuardBundle,
-            digest: digestGuardBundle,
-            settings: settingsGuardBundle,
-          }),
       };
 
       const config: AIAgentConfig = {
@@ -609,11 +596,6 @@ describeLLM("Orchestrator", () => {
               calendar: calendarBundle,
             })
           ),
-        getDomainToolsForUser: () =>
-          Effect.succeed({
-            tasks: tasksBundle,
-            calendar: calendarBundle,
-          }),
       };
 
       const config: AIAgentConfig = {
