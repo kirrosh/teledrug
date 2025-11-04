@@ -26,6 +26,9 @@
     "miniapp:dev": "bun run --filter miniapp dev -- --port 3001",
     "miniapp:build": "bun run --filter miniapp build",
     "miniapp:start": "bun run --filter miniapp start",
-    "miniapp:stack": "bun run scripts/dev-miniapp-with-bot.ts"
+    "miniapp:stack": "bun run scripts/dev-miniapp-with-bot.ts",
+    "google-auth:dev": "bun run --filter @teledrug/google-auth dev",
+    "google-auth:build": "bun run --filter @teledrug/google-auth build",
+    "google-auth:start": "bun run --filter @teledrug/google-auth start"
   }
 }

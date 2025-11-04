@@ -147,3 +147,26 @@ export const tasks = pgTable(
 
 export type Task = typeof tasks.$inferSelect;
 export type NewTask = typeof tasks.$inferInsert;
+
+// OAuth Sessions - для временного хранения OAuth состояний
+export const oauthSessions = pgTable(
+  "oauth_sessions",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: varchar("session_id", { length: 64 }).notNull().unique(),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    provider: varchar("provider", { length: 50 }).notNull(), // 'google', 'yandex', etc
+    state: varchar("state", { length: 128 }).notNull(),
+    codeVerifier: varchar("code_verifier", { length: 128 }).notNull(),
+    metadata: jsonb("metadata"), // Дополнительные данные
+    expiresAt: timestamp("expires_at").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    sessionIdIdx: index("idx_oauth_sessions_session_id").on(table.sessionId),
+    expiresAtIdx: index("idx_oauth_sessions_expires_at").on(table.expiresAt),
+  })
+);
+
+export type OAuthSession = typeof oauthSessions.$inferSelect;
+export type NewOAuthSession = typeof oauthSessions.$inferInsert;

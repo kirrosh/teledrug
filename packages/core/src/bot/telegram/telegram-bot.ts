@@ -13,6 +13,7 @@ import { createImageAnalyzer } from "./image-analyzer";
 import { registerCommandHandlers } from "./handlers/commands";
 import { registerCallbackHandlers } from "./handlers/callbacks";
 import { registerMessageHandlers } from "./handlers/messages";
+import { logger } from "../../utils/logger";
 
 type WebAppUrlIssue = "invalid" | "nonHttps";
 
@@ -79,6 +80,28 @@ const makeTelegramClient = (config: BotConfig) =>
 
     const bot = new Bot(config.telegramToken);
 
+    // Global error handler for Grammy
+    bot.catch((err) => {
+      const ctx = err.ctx;
+      console.error("💥 Grammy Error Handler caught an error");
+      console.error("See logs/error-*.log for full details");
+
+      // Log full error to file
+      try {
+        logger.grammy(ctx, err.error);
+        console.error("✅ Error logged to file successfully");
+      } catch (logError) {
+        console.error("❌ Failed to log error to file:", logError);
+      }
+
+      // Try to reply to user
+      try {
+        ctx.reply("❌ Произошла ошибка. Попробуйте позже.").catch(() => {});
+      } catch {
+        // Ignore reply errors
+      }
+    });
+
     const rawWebAppUrl = config.webAppUrl?.trim();
     const { url: resolvedWebAppUrl, issue: webAppUrlIssue } =
       resolveWebAppUrl(rawWebAppUrl);
@@ -135,6 +158,7 @@ const makeTelegramClient = (config: BotConfig) =>
           { command: "start", description: "🚀 Запустить бота" },
           { command: "clear", description: "🧹 Очистить историю" },
           { command: "integrations", description: "📊 Показать интеграции" },
+          { command: "connect_google", description: "🗓️ Подключить Google Calendar" },
         ];
 
         if (resolvedWebAppUrl) {

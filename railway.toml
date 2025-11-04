@@ -1,0 +1,10 @@
+[build]
+builder = "NIXPACKS"
+buildCommand = "cd apps/google-auth && bun install --frozen-lockfile && bun run build"
+
+[deploy]
+startCommand = "cd apps/google-auth && bun run dist/index.js"
+healthcheckPath = "/"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
