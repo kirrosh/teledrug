@@ -3,6 +3,9 @@
   "workspaces": {
     "": {
       "name": "teledrug-monorepo",
+      "dependencies": {
+        "postgres": "^3.4.7",
+      },
       "devDependencies": {
         "@ngrok/ngrok": "^1.5.2",
         "@types/bun": "latest",

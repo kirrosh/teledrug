@@ -30,5 +30,8 @@
     "google-auth:dev": "bun run --filter @teledrug/google-auth dev",
     "google-auth:build": "bun run --filter @teledrug/google-auth build",
     "google-auth:start": "bun run --filter @teledrug/google-auth start"
+  },
+  "dependencies": {
+    "postgres": "^3.4.7"
   }
 }
