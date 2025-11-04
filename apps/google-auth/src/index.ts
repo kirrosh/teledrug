@@ -9,13 +9,12 @@ const PORT = process.env.API_PORT || 3001;
 
 // Validate required environment variables
 const requiredEnvVars = [
+  'DATABASE_URL',
+  'ENCRYPTION_MASTER_KEY',
+  'TELEGRAM_BOT_TOKEN',
   'GOOGLE_CLIENT_ID',
   'GOOGLE_CLIENT_SECRET',
   'GOOGLE_REDIRECT_URI',
-  'API_URL',
-  'DATABASE_URL',
-  'ENCRYPTION_KEY',
-  'TELEGRAM_BOT_TOKEN',
 ];
 
 for (const envVar of requiredEnvVars) {
