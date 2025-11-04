@@ -24,6 +24,20 @@
         "@teledrug/core": "workspace:*",
       },
     },
+    "apps/google-auth": {
+      "name": "@teledrug/google-auth",
+      "version": "0.0.1",
+      "dependencies": {
+        "@teledrug/db": "workspace:*",
+        "@teledrug/encryption": "workspace:*",
+        "drizzle-orm": "^0.31.4",
+        "effect": "^3.10.0",
+        "googleapis": "^131.0.0",
+      },
+      "devDependencies": {
+        "@types/node": "^20.11.0",
+      },
+    },
     "apps/miniapp": {
       "name": "miniapp",
       "version": "0.1.0",
@@ -493,6 +507,8 @@
     "@teledrug/db": ["@teledrug/db@workspace:packages/db"],
 
     "@teledrug/encryption": ["@teledrug/encryption@workspace:packages/encryption"],
+
+    "@teledrug/google-auth": ["@teledrug/google-auth@workspace:apps/google-auth"],
 
     "@teledrug/og": ["@teledrug/og@workspace:packages/og"],
 

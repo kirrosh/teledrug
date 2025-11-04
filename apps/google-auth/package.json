@@ -1,0 +1,21 @@
+{
+  "name": "@teledrug/google-auth",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "build": "bun build src/index.ts --target=bun --outdir=dist",
+    "start": "bun run dist/index.js"
+  },
+  "dependencies": {
+    "googleapis": "^131.0.0",
+    "@teledrug/db": "workspace:*",
+    "@teledrug/encryption": "workspace:*",
+    "effect": "^3.10.0",
+    "drizzle-orm": "^0.31.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0"
+  }
+}
