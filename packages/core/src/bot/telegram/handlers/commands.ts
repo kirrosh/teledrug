@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import type { Bot } from "grammy";
 import { InlineKeyboard } from "grammy";
 import type { UserConfigStorage } from "../../../services/user-config-storage";
+import crypto from "crypto";
 
 interface CommandHandlersOptions {
   readonly resolvedWebAppUrl?: string;
@@ -34,7 +35,8 @@ export const registerCommandHandlers = (
         "📱 **Команды:**\n" +
         "/app — Мини-приложение\n" +
         "/clear — Очистить историю\n" +
-        "/integrations — Показать интеграции\n\n" +
+        "/integrations — Показать интеграции\n" +
+        "/connect_google — Подключить Google Calendar\n\n" +
         "Готов помочь! Чем займемся? 💪",
       { parse_mode: "Markdown" }
     );
@@ -119,6 +121,98 @@ export const registerCommandHandlers = (
     } catch (error) {
       console.error("Ошибка в команде /integrations:", error);
       await ctx.reply("❌ Произошла ошибка при получении интеграций.");
+    }
+  });
+
+  bot.command("connect_google", async (ctx) => {
+    try {
+      console.log("🔐 /connect_google command received");
+      console.log("📝 Environment variables check:", {
+        API_URL: process.env.API_URL,
+        hasApiUrl: !!process.env.API_URL,
+      });
+
+      const userId = ctx.from?.id;
+      console.log("👤 User ID:", userId);
+
+      if (!userId) {
+        console.error("❌ User ID not found in context");
+        await ctx.reply("❌ Не удалось определить ваш ID.");
+        return;
+      }
+
+      // Check if API_URL is configured
+      const apiUrl = process.env.API_URL;
+      console.log("🌐 API_URL value:", apiUrl);
+
+      if (!apiUrl) {
+        console.error("❌ API_URL not configured in environment");
+        await ctx.reply(
+          "❌ OAuth сервис не настроен. Обратитесь к администратору."
+        );
+        return;
+      }
+
+      // Generate unique session ID
+      const sessionId = crypto.randomBytes(16).toString('hex');
+      console.log("🆔 Generated session ID:", sessionId);
+
+      // Construct OAuth URL
+      const authUrl = `${apiUrl}/oauth/google/start?session_id=${sessionId}&user_id=${userId}`;
+      console.log("🔗 OAuth URL:", authUrl);
+
+      console.log(`✅ Generating Google OAuth link for user ${userId}, session ${sessionId}`);
+
+      // Create inline keyboard with authorization button
+      const keyboard = new InlineKeyboard()
+        .url("🔐 Авторизоваться через Google", authUrl)
+        .row()
+        .text("❌ Отмена", "cancel_oauth");
+
+      console.log("⌨️ Keyboard created, sending reply...");
+
+      await ctx.reply(
+        "🗓️ **Подключение Google Calendar**\n\n" +
+          "Для авторизации нажмите на кнопку ниже.\n" +
+          "Вы будете перенаправлены в браузер для безопасной авторизации через Google.\n\n" +
+          "⚠️ **Важно:** Убедитесь, что вы вошли в свой Google аккаунт в браузере.\n\n" +
+          "После успешной авторизации вы получите уведомление здесь, в Telegram.",
+        {
+          parse_mode: "Markdown",
+          reply_markup: keyboard,
+        }
+      );
+
+      console.log("✅ Reply sent successfully");
+    } catch (error) {
+      console.error("💥 Error in /connect_google command:", error);
+      console.error("Stack trace:", error instanceof Error ? error.stack : "No stack trace");
+
+      try {
+        await ctx.reply(
+          "❌ Произошла ошибка при подключении Google Calendar. Попробуйте позже."
+        );
+      } catch (replyError) {
+        console.error("💥 Failed to send error message:", replyError);
+      }
+    }
+  });
+
+  // Handle cancel OAuth callback
+  bot.callbackQuery("cancel_oauth", async (ctx) => {
+    try {
+      console.log("❌ Cancel OAuth callback triggered");
+      await ctx.answerCallbackQuery();
+      await ctx.deleteMessage();
+      await ctx.reply("❌ Подключение Google Calendar отменено.");
+      console.log("✅ Cancel callback completed");
+    } catch (error) {
+      console.error("💥 Error in cancel_oauth callback:", error);
+      try {
+        await ctx.answerCallbackQuery({ text: "Ошибка отмены" });
+      } catch (answerError) {
+        console.error("💥 Failed to answer callback query:", answerError);
+      }
     }
   });
 };

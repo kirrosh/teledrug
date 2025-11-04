@@ -26,6 +26,9 @@
     "miniapp:dev": "bun run --filter miniapp dev -- --port 3001",
     "miniapp:build": "bun run --filter miniapp build",
     "miniapp:start": "bun run --filter miniapp start",
-    "miniapp:stack": "bun run scripts/dev-miniapp-with-bot.ts"
+    "miniapp:stack": "bun run scripts/dev-miniapp-with-bot.ts",
+    "api:dev": "bun run --filter @teledrug/api dev",
+    "api:build": "bun run --filter @teledrug/api build",
+    "api:start": "bun run --filter @teledrug/api start"
   }
 }
