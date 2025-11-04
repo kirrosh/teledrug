@@ -1,6 +1,6 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "cd apps/google-auth && bun install --frozen-lockfile && bun run build"
+buildCommand = "bun install --frozen-lockfile && bunx drizzle-kit push --config drizzle.config.ts --force && cd apps/google-auth && bun run build"
 
 [deploy]
 startCommand = "cd apps/google-auth && bun run dist/index.js"

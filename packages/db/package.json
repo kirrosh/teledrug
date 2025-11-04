@@ -13,11 +13,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "drizzle-orm": "^0.44.5",
+    "drizzle-orm": "^0.44.7",
     "postgres": "^3.4.7"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.31.4",
+    "drizzle-kit": "^0.31.6",
     "typescript": "5.9.2"
   }
 }
