@@ -100,7 +100,8 @@ sudo systemctl start google-auth
 
 ## Endpoints
 
-- `GET /health` - Health check
+- `GET /` - Root health check (for Railway/hosting platforms)
+- `GET /health` - Health check endpoint
 - `GET /oauth/google/start` - Initialize OAuth flow
 - `GET /oauth/google/callback` - OAuth callback
 - `GET /oauth/google/success` - Success page

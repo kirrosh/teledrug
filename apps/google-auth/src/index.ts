@@ -59,10 +59,10 @@ const server = Bun.serve({
     }
 
     try {
-      // Health check
-      if (path === '/health') {
+      // Root and health check
+      if (path === '/' || path === '/health') {
         return Response.json(
-          { status: 'ok', timestamp: new Date().toISOString() },
+          { status: 'ok', timestamp: new Date().toISOString(), service: 'google-auth' },
           { headers }
         );
       }
